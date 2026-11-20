@@ -1,0 +1,22 @@
+<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover"><title>风过雪岭 · 草原骑行</title>
+<style>
+*{box-sizing:border-box}html,body{margin:0;height:100%;overflow:hidden;background:#747e6f;color:#fff9e7;font-family:"Microsoft YaHei",sans-serif}canvas{width:100%;height:100%;display:block;touch-action:none;cursor:grab}canvas:active{cursor:grabbing}
+#hud{position:absolute;inset:0;pointer-events:none;background:linear-gradient(180deg,#182c364a,transparent 17%,transparent 76%,#1d251d63);text-shadow:0 1px 6px #272b2780}
+header,footer,nav,#info,#touch{position:absolute}header{left:3.6%;top:4.8%;display:flex;align-items:center;gap:13px}header svg{width:44px;height:44px}h1{font:600 clamp(22px,2.3vw,37px)/1.15 "STKaiti","KaiTi",serif;letter-spacing:.14em;margin:0}header small{display:block;font:9px Georgia,serif;letter-spacing:.29em;margin-top:6px;color:#fff2ce}
+nav{right:3.6%;top:4.9%;display:flex;align-items:center;gap:8px}button{pointer-events:auto;cursor:pointer;border:1px solid #fff3d345;background:#24363249;color:#fff6de;border-radius:5px;padding:6px 10px;font:12px inherit;backdrop-filter:blur(6px)}button:hover,button:focus-visible{background:#243632a8}button svg{width:17px;height:17px;display:block}#clock{font:15px Georgia,serif;letter-spacing:.10em}#時{font:13px "Microsoft YaHei";letter-spacing:.1em}#timeBtn{display:flex;align-items:center;gap:8px;min-height:31px}
+footer{bottom:5.2%;left:3.6%;display:flex;align-items:center;gap:15px}.stroke{width:1px;height:39px;background:#fff0c860}.label{font:10px "Microsoft YaHei";letter-spacing:.20em;color:#f2e7c7}.large{font:23px/1.25 Georgia,"STKaiti","KaiTi",serif;letter-spacing:.04em}.small{font:12px Georgia,serif;color:#eee5cb}#marks{display:inline-flex;gap:4px;vertical-align:middle;margin-left:6px}#marks i{width:4px;height:11px;transform:skew(-17deg);background:#f4e3b849}#marks i.on{background:#f6db95}
+#info{right:3.6%;bottom:5.2%;font-size:11px;display:flex;gap:14px;align-items:center;color:#f7eed9}kbd{font:11px Georgia,sans-serif;border:1px solid #fff1d874;padding:2px 4px;border-radius:3px;margin-right:3px}
+#message{position:absolute;inset:0;display:grid;place-items:center;pointer-events:none;text-align:center}#msgCard{padding:19px 28px;border:1px solid #f3dca65e;background:#23302bd9;border-radius:6px;line-height:1.8;max-width:85vw}#msgCard[hidden]{display:none}#msgCard button{margin-top:9px}#touch{bottom:13%;left:3.6%;right:3.6%;display:none;justify-content:space-between}#touch button{font-size:19px;min-width:43px;touch-action:none}
+@media(pointer:coarse){#touch{display:flex}#info{display:none}}@media(max-width:700px){header svg{width:33px}header{gap:7px}header small{font-size:7px}#info{display:none}nav{gap:4px}nav button{padding:5px}#時{display:none}}
+</style></head><body>
+<canvas id="view" aria-label="可以拖动环视的第三人称草原骑行场景"></canvas>
+<div id="hud"><header><svg viewBox="0 0 48 48" fill="none" stroke="#fce8b4" stroke-width="1.45"><path d="M24 2 46 24 24 46 2 24Z"/><path d="m7 28 11-13 5 7 6-10 12 16M15 24l4-4 3 4m4-6 3 2 2-3M13 30q8-5 14 0t10 0m-18 5q5-3 10 0"/></svg><div><h1>风过雪岭</h1><small>SNOWLINE MEADOWS</small></div></header>
+<nav><button id="timeBtn" title="跳到下一时段（T）" aria-label="跳到下一时段"><span id="時">清晨</span><span id="clock">07:20</span></button>
+<button id="audioBtn" title="开启环境声（M）" aria-label="开启环境声"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6"><path d="M3 9h4l5-4v14l-5-4H3z"/><path id="soundMark" d="m16 9 6 6m0-6-6 6"/></svg></button>
+<button id="pauseBtn" title="暂停或继续（空格）" aria-label="暂停或继续"><svg viewBox="0 0 24 24" fill="currentColor"><path id="pauseMark" d="M6 5h4v14H6zm8 0h4v14h-4z"/></svg></button></nav>
+<footer><div><div class="label">步态</div><div class="large"><span id="gait">慢步</span><span id="marks"><i></i><i></i><i></i></span></div></div><div class="stroke"></div><div><div class="label">行程</div><div class="large"><span id="distance">0</span> <span class="small" id="unit">m</span></div></div></footer>
+<div id="info"><span><kbd>W</kbd><kbd>S</kbd> 变速</span><span><kbd>A</kbd><kbd>D</kbd> 微调方向</span><span>拖动环视 · 滚轮调距</span></div>
+<div id="touch"><div><button data-dir="-1" aria-label="偏左">‹</button> <button data-dir="1" aria-label="偏右">›</button></div><div><button data-speed="-1" aria-label="减速">−</button> <button data-speed="1" aria-label="加速">＋</button></div></div></div>
+<div id="message"><div id="msgCard">正在铺开草原…</div></div>
+<!--MODULES-->
+</body></html>

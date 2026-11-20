@@ -1,0 +1,6 @@
+__pycache__/
+*.py[cod]
+.DS_Store
+Thumbs.db
+/*.mp4
+/骑行实景.jpg
