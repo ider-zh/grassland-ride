@@ -41,6 +41,19 @@ export function createChunks(scene){
     current=index;
   }
   update.frame=frame=>{planet.matrix.copy(frame.fromPlanet);planet.matrixWorldNeedsUpdate=true;};
+  const sightHits=[];
+  update.blocksBird=ray=>{
+    for(const [id,{group}] of chunks){
+      const town=sections[segmentAt(id*CHUNK)].scenery===0;
+      // Soil is the first child. Within town the casting meshes also block sight.
+      for(const [i,object] of group.children.entries()){
+        if(i!==0&&!(town&&object.castShadow))continue;
+        sightHits.length=0;object.raycast(ray,sightHits);
+        if(sightHits.length)return true;
+      }
+    }
+    return false;
+  };
   update.inspect=()=>({current,live:chunks.size,farHidden:far.filter(m=>!m.visible).length,created,disposed,indices:[...chunks.keys()].sort((a,b)=>a-b)});
   return update;
 }

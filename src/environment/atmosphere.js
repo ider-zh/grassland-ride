@@ -1,47 +1,70 @@
 import * as T from 'three';
-import {random,windTravel,LENGTH,segmentAt,sections} from '../world/route.js';
+import {random,windTravel,LENGTH,segmentAt,sections,terrainBlend,smooth} from '../world/route.js';
 
 export function createTrailAir(scene){
-  const roll=random(27641),capacity=180,particles=Array.from({length:capacity},()=>({life:0}));let next=0,verge=0,last=NaN;
+  const roll=random(27641),capacity=115,particles=Array.from({length:capacity},()=>({life:0}));
+  let next=0,verge=0,last=NaN,diagnostics={};
   const p=new T.BufferAttribute(new Float32Array(capacity*6*3),3).setUsage(T.DynamicDrawUsage);
   const c=new T.BufferAttribute(new Float32Array(capacity*6*3),3).setUsage(T.DynamicDrawUsage);
-  const g=new T.BufferGeometry();g.setAttribute('position',p);g.setAttribute('color',c);
-  const leaves=new T.Mesh(g,new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide}));leaves.frustumCulled=false;scene.add(leaves);
-  const greens=['#758238','#a4ad56','#b7ac6b','#829648','#d3c98c'].map(v=>new T.Color(v));
-  function emit(x,y,z,fromHoof){
-    const b=particles[next++%capacity];b.x=x;b.y=y;b.z=z;b.life=b.max=fromHoof?.37+roll()*.48:1.4+roll()*1.7;
-    b.vx=fromHoof?(roll()-.45)*1.7:.6+roll()*.9;b.vy=fromHoof?1.25+roll()*2.05:.15+roll()*.6;
-    b.vz=fromHoof?.6+roll()*2:(roll()-.5)*.7;b.a=roll()*6.28;b.spin=(roll()-.5)*12;
-    b.length=(fromHoof?.051:.075)+roll()*.088;b.width=.008+roll()*.014;b.col=greens[Math.floor(roll()*greens.length)];b.hoof=fromHoof;
-  }
-
+  const alpha=new T.BufferAttribute(new Float32Array(capacity*6),1).setUsage(T.DynamicDrawUsage);
+  const g=new T.BufferGeometry();g.setAttribute('position',p);g.setAttribute('color',c);g.setAttribute('alpha',alpha);
+  const leaves=new T.Mesh(g,new T.MeshBasicMaterial({vertexColors:true,side:T.DoubleSide,transparent:true,depthWrite:false}));
+  leaves.material.onBeforeCompile=sh=>{
+    sh.vertexShader='attribute float alpha;varying float soft;\n'+sh.vertexShader.replace('#include <begin_vertex>','#include <begin_vertex>\nsoft=alpha;');
+    sh.fragmentShader='varying float soft;\n'+sh.fragmentShader.replace('#include <color_fragment>','#include <color_fragment>\ndiffuseColor.a*=soft;');
+  };
+  leaves.frustumCulled=false;scene.add(leaves);
+  const field=['#838d57','#a1a663','#b5ab72','#87865a','#c0b174'].map(v=>new T.Color(v));
+  const town=['#8e846d','#aaa08c','#988f7d'].map(v=>new T.Color(v));
   const down=[false,false],point=new T.Vector3(),dir=new T.Vector3(),zero=new T.Vector3();
-  const update=(dt,t,s,speed,feet,frame)=>{
+  function emit(x,y,z,hoof,region,p){
+    const b=particles[next++%capacity];b.x=x;b.y=y;b.z=z;b.life=b.max=hoof?.25+roll()*.25:1.7+roll()*1.5;
+    const along=hoof?-.24-roll()*.95:.38+roll()*.90,cross=(roll()-.54)*(hoof?.74:1.65);
+    b.vx=p.fx*along+p.rx*cross;b.vz=p.fz*along+p.rz*cross;
+    b.vy=hoof?.8+roll()*.95:.04+roll()*.38;b.a=roll()*6.28;b.spin=(roll()-.5)*(hoof?13:5.9);
+    b.length=(hoof?.035:.067)+roll()*(hoof?.046:.082);b.width=.006+roll()*(hoof?.009:.013);
+    b.col=region===0?town[Math.floor(roll()*town.length)]:field[Math.floor(roll()*field.length)];b.hoof=hoof;
+  }
+  const update=(dt,t,s,speed,feet,frame,subject)=>{
     const reset=!Number.isFinite(last)||Math.abs(s-last)>3;last=s;
     if(reset){for(const b of particles)b.life=0;verge=0;}
+    const region=sections[segmentAt(s)].scenery,[from,to,mix]=terrainBlend(s);
+    const fill=[.09,1,.40,.34,.51],density=fill[from]*(1-mix)+fill[to]*mix;
     for(let i=0;i<2;i++){
       const f=feet[i+2];
-      if(!reset&&down[i]&&!f.stance&&speed>2.4){
-        for(let j=0;j<(speed>5?5:2);j++)emit(f.sole.x+(roll()-.5)*.08,f.sole.y+.06,f.sole.z,true);
-      }down[i]=f.stance;
+      if(!reset&&down[i]&&!f.stance&&speed>3.65&&region!==0&&roll()<.33+.29*smooth(4,7.4,speed))
+        emit(f.sole.x+(roll()-.5)*.05,f.sole.y+.05,f.sole.z,true,region,subject);
+      down[i]=f.stance;
     }
-    verge+=dt*(1.8+speed*.45);
+    verge+=dt*(1.33+speed*.20)*density;
     while(verge>=1){
-      verge--;const spot=frame.at(s+(roll()-.31)*12,(roll()<.65?-1:1)*(2.12+roll()*1.85));
-      const h=spot.y+.23+roll()*.62,n=2+Math.floor(roll()*3);
-      for(let i=0;i<n;i++)emit(spot.x+(roll()-.5)*.48,h+roll()*.29,spot.z+(roll()-.5)*.62,false);
+      verge--;
+      // A broad wind field in front of the rider, not a burst around the hooves.
+      const at=s+7.5+roll()*Math.min(22,10+speed*1.9),side=roll()<.52?-1:1;
+      const pos=frame.at(at,side*(.75+roll()*5.9)),zone=sections[segmentAt(at)].scenery;
+      if(zone===0&&roll()>.35)continue;
+      const h=pos.y+.28+roll()*1.03,n=roll()<.41?2:1;
+      for(let i=0;i<n;i++)emit(pos.x+(roll()-.5)*.34,h+roll()*.28,pos.z+(roll()-.5)*.48,false,zone,subject);
     }
-    let v=0;
+    let v=0,front=0,aft=0,kicked=0;
     for(const b of particles){
       b.life-=dt;if(b.life<=0)continue;
-      b.vy-=dt*(b.hoof?7.5:.43);b.x+=(b.vx+.22*Math.sin(3*t+b.a))*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;b.a+=b.spin*dt;
-      if(b.y<frame.ground(b.x,b.z)+.014){b.life=0;continue;}
-      const fade=Math.min(1,b.life*7),len=b.length*fade,w=b.width*fade,ax=Math.cos(b.a)*len,ay=Math.sin(b.a)*len*.77,az=len*.38;
-      const write=(l,k,shade)=>{p.setXYZ(v,b.x+ax*l-w*k*Math.sin(b.a),b.y+ay*l+w*k*Math.cos(b.a),b.z+az*l+.008*k);c.setXYZ(v++,b.col.r*shade,b.col.g*shade,b.col.b*shade);};
+      b.vy-=dt*(b.hoof?7.7:.30);b.x+=(b.vx+.12*Math.sin(2.1*t+b.a))*dt;
+      b.y+=b.vy*dt;b.z+=b.vz*dt;b.a+=b.spin*dt;
+      const ahead=(b.x-subject.x)*subject.fx+(b.z-subject.z)*subject.fz;
+      if(ahead < -4.5||b.y<frame.ground(b.x,b.z)+.014){b.life=0;continue;}
+      const fade=smooth(0,.22,b.life)*smooth(0,.15,b.max-b.life);
+      const opacity=fade*(b.hoof?.32:.60)*(.12+.88*smooth(-3.4,3,ahead));
+      if(opacity<.012)continue;
+      if(ahead>=0)front++;else aft++;
+      if(b.hoof)kicked++;
+      const len=b.length,w=b.width,ax=Math.cos(b.a)*len,ay=Math.sin(b.a)*len*.77,az=len*.38;
+      const write=(l,k,shade)=>{p.setXYZ(v,b.x+ax*l-w*k*Math.sin(b.a),b.y+ay*l+w*k*Math.cos(b.a),b.z+az*l+.008*k);
+        c.setXYZ(v,b.col.r*shade,b.col.g*shade,b.col.b*shade);alpha.setX(v++,opacity);};
       write(-.5,0,.75);write(.08,1,1.15);write(.65,0,1);write(-.5,0,.75);write(.65,0,1);write(.08,-.6,.86);
     }
-    g.setDrawRange(0,v);p.needsUpdate=c.needsUpdate=true;
-
+    g.setDrawRange(0,v);p.needsUpdate=c.needsUpdate=alpha.needsUpdate=true;
+    diagnostics={front,aft,kicked,region,density};
   };
   update.rebase=matrix=>{
     zero.set(0,0,0).applyMatrix4(matrix);
@@ -51,6 +74,7 @@ export function createTrailAir(scene){
       b.x=point.x;b.y=point.y;b.z=point.z;b.vx=dir.x;b.vy=dir.y;b.vz=dir.z;
     }
   };
+  update.inspect=()=>({...diagnostics});
   return update;
 }
 

@@ -1,5 +1,4 @@
 import * as T from 'three';
-import {random} from '../world/route.js';
 
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 const keys=[
@@ -38,19 +37,9 @@ gl_FragColor=vec4(col,1.);
 #include <colorspace_fragment>
 }`}));
   sky.renderOrder=-10;scene.add(sky);
-  const birds=new T.Group(), wings=[];
-  const r=random(885);
-  for(let i=0;i<7;i++){
-    const bird=new T.Group(),pair=[];
-    for(const side of [-1,1]){
-      const geo=new T.BufferGeometry();geo.setAttribute('position',new T.Float32BufferAttribute([0,0,0,side*.54,.12,.08,side*1.27,.035,.34,side*.65,.10,.29,0,0,.18],3));geo.setIndex([0,1,3,1,2,3,0,3,4]);
-      const wing=new T.Mesh(geo,new T.MeshBasicMaterial({color:0x454e50,side:T.DoubleSide}));bird.add(wing);pair.push(wing);
-    }
-    bird.userData={i,x:r()*21,y:r()*4,z:r()*13};wings.push(pair);birds.add(bird);
-  }
-  scene.add(birds);
   const storm=new T.Color('#71888e');
-  return (hour,t,s,camera,subject,rain=0)=>{
+  const east=new T.Vector3(),back=new T.Vector3(),sunRay=new T.Vector3(),basis=new T.Matrix4();
+  return (hour,t,s,camera,subject,rain=0,planetUp)=>{
     let j=0;while(j<keys.length-2&&hour>keys[j+1][0])j++;
     const a=keys[j],b=keys[j+1];let u=(hour-a[0])/(b[0]-a[0]);u=u*u*(3-2*u);
     [U.zenith.value,U.horizon.value,U.lit.value,U.shade.value,sun.color,hemi.color,scene.fog.color].forEach((c,i)=>c.copy(a[i+1]).lerp(b[i+1],u));
@@ -60,15 +49,12 @@ gl_FragColor=vec4(col,1.);
     sun.intensity*=1-.72*rain;hemi.intensity*=1-.23*rain;
     const phase=(hour-6)*Math.PI/12;
     U.sunDir.value.set(-Math.cos(phase)*.91,Math.max(.19,Math.sin(phase)*.92),.38+Math.sin(phase)*.18).normalize();
-    sun.target.position.copy(subject);sun.position.copy(subject).addScaledVector(U.sunDir.value,29);
+    east.set(1,0,0).projectOnPlane(planetUp).normalize();back.crossVectors(east,planetUp).normalize();
+    basis.makeBasis(east,planetUp,back);
+    sky.quaternion.setFromRotationMatrix(basis);
+    sunRay.copy(U.sunDir.value).transformDirection(basis);
+    sun.target.position.copy(subject);sun.position.copy(subject).addScaledVector(sunRay,29);
     U.clock.value=t%100000;U.night.value=clamp((.9-hemi.intensity)*2,0,1);
     sky.position.copy(camera.position);
-    const flight=(t+9)%53;birds.visible=flight<25;
-    if(birds.visible)birds.children.forEach((bird,i)=>{
-      const d=bird.userData;bird.position.set(camera.position.x+flight*6-79+d.x,23+d.y+Math.sin(t*.32+i)*.6,camera.position.z-75+d.z);
-      bird.rotation.y=-1.15;const flap=.14+.42*Math.sin(t*5.4+i)*Math.max(0,Math.sin(t*.68+i));
-      wings[i][0].rotation.z=-flap;wings[i][1].rotation.z=flap;
-    });
-    return birds.visible?birds.children[3].position:null;
   };
 }

@@ -1,8 +1,9 @@
 import * as T from 'three';
-import {surfacePoint,wrap,segmentAt,sections,LENGTH,FRAME_SPAN,smooth} from './world/route.js';
+import {surfacePoint,wrap,segmentAt,sections,LENGTH,FRAME_SPAN,RADIUS,smooth} from './world/route.js';
 import {createChunks} from './world/chunks.js';
 import {createFrame} from './world/frame.js';
 import {createSky} from './environment/sky.js';
+import {createBirds} from './environment/birds.js';
 import {createTrailAir,createShutter} from './environment/atmosphere.js';
 import {createRain} from './environment/rain.js';
 import {createMount} from './rider/mount.js';
@@ -14,7 +15,8 @@ function run(){
   const renderer=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
   renderer.outputColorSpace=T.SRGBColorSpace;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
   const scene=new T.Scene(),camera=new T.PerspectiveCamera(48,1,.08,790);
-  const sky=createSky(scene),chunks=createChunks(scene),mount=createMount(false),sound=createSoundscape(byId('field-audio'));scene.add(mount.root);
+  const debug=new URLSearchParams(location.search).has('inspect');
+  const sky=createSky(scene),birds=createBirds(scene),chunks=createChunks(scene),mount=createMount(false),sound=createSoundscape(byId('field-audio'),debug);scene.add(mount.root);
   const air=createTrailAir(scene),rainEffect=createRain(scene),renderRide=createShutter(renderer,scene,camera,mount.root);
   const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;
   const ctx=shadowCanvas.getContext('2d'),grad=ctx.createRadialGradient(64,64,4,64,64,63);
@@ -23,14 +25,22 @@ function run(){
   const shadowPivot=new T.Group();shadowPivot.add(shadow);scene.add(shadowPivot);
   const speeds=[1.65,3.75,7.4],names=['慢步','小跑','疾驰'],held=new Set();
   let gait=0,speed=speeds[0],s=0,meters=0,t=0,hour=7.33,lane=0,sideV=0,touch=0,paused=false;
-  let orbit=-.47,height=.075,zoom=5.85,drag=null,head=0,camReady=false,freeCamera=false;
+  let orbit=-.47,height=.075,zoom=5.85,drag=null,camReady=false,freeCamera=false,panBias=0,sceneLift=0;
   let dayBlend=0,skipHours=0,steerLean=0;
   let rain=0,rainTarget=0;
-  const debug=new URLSearchParams(location.search).has('inspect');
-  const headDelta=(from,to)=>Math.atan2(Math.sin(to-from),Math.cos(to-from));
-  const aim=new T.Vector3(),eye=new T.Vector3(),camLook=new T.Vector3(),forward=new T.Vector3();
+  const aim=new T.Vector3(),eye=new T.Vector3(),camLook=new T.Vector3(),lookForward=new T.Vector3(),
+    targetForward=new T.Vector3(),localUp=new T.Vector3(),right=new T.Vector3(),cameraDir=new T.Vector3();
+  const baseOrbit=-.47;
   const rebase=new T.Matrix4();
   let frameId=NaN,frame;
+  const audioContacts=[],frameHit=new T.Vector3();
+  function resetRideSound(){audioContacts.length=0;birds.reset();sound.reset();}
+  function soundFrame(dt){
+    if(!dt||paused)return;
+    if(!sound.active())return;
+    const visible=birds.visible(t,camera,chunks.blocksBird);
+    sound.tick(audioContacts,{speed,t,dt,s,hour,rain,camera,visible});
+  }
   function frameFor(distance){
     const id=Math.floor(distance/FRAME_SPAN);
     if(id===frameId)return;
@@ -38,9 +48,11 @@ function run(){
     if(frame&&camReady){
       rebase.multiplyMatrices(next.fromPlanet,frame.toPlanet);
       camera.position.applyMatrix4(rebase);camLook.applyMatrix4(rebase);
-      forward.set(-Math.sin(head),0,-Math.cos(head)).transformDirection(rebase);
-      head=Math.atan2(-forward.x,-forward.z);
+      lookForward.transformDirection(rebase);camera.up.transformDirection(rebase);
       mount.rebase(rebase);air.rebase(rebase);
+      for(const h of audioContacts){
+        frameHit.set(h.x,h.y,h.z).applyMatrix4(rebase);h.x=frameHit.x;h.y=frameHit.y;h.z=frameHit.z;
+      }
     }
     renderRide.resetHistory?.();frameId=id;frame=next;chunks.frame(frame);
   }
@@ -62,7 +74,7 @@ function run(){
   };
   byId('timeBtn').onclick=nextTime;byId('audioBtn').onclick=audio;byId('pauseBtn').onclick=()=>setPause(!paused);
   byId('routeGuide').querySelectorAll('[data-stop]').forEach(button=>button.onclick=()=>{
-    s=Number(button.dataset.stop);meters=s;camReady=false;frameId=NaN;freeCamera=false;
+    resetRideSound();s=Number(button.dataset.stop);meters=s;camReady=false;frameId=NaN;freeCamera=false;orbit=baseOrbit;
     byId('routeGuide').open=false;
     world(.016);renderRide(s,t,speed,frame);
   });
@@ -79,7 +91,7 @@ function run(){
   addEventListener('keyup',e=>held.delete(e.code));addEventListener('blur',()=>{held.clear();touch=0;drag=null;});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)setPause(true);});
   canvas.onpointerdown=e=>{if(paused)return;canvas.setPointerCapture(e.pointerId);drag=[e.clientX,e.clientY];};
-  canvas.onpointermove=e=>{if(!drag)return;if(Math.abs(e.clientX-drag[0])+Math.abs(e.clientY-drag[1])>1)freeCamera=true;orbit-=(e.clientX-drag[0])*.006;height=clamp(height+(e.clientY-drag[1])*.003,-.13,.74);drag=[e.clientX,e.clientY];};
+  canvas.onpointermove=e=>{if(!drag)return;if(!freeCamera&&Math.abs(e.clientX-drag[0])+Math.abs(e.clientY-drag[1])>1){freeCamera=true;orbit+=panBias;panBias=0;}orbit-=(e.clientX-drag[0])*.006;height=clamp(height+(e.clientY-drag[1])*.003,-.13,.74);drag=[e.clientX,e.clientY];};
   canvas.onpointercancel=canvas.onpointerup=()=>drag=null;
   canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom+Math.sign(e.deltaY)*.35,3.1,9);},{passive:false});
   document.querySelectorAll('[data-speed]').forEach(b=>b.onclick=()=>{if(!paused)setGait(+b.dataset.speed);});
@@ -113,20 +125,45 @@ function run(){
     const contacts=mount.update(t,dt,speed,steerLean,s,(x,negativeZ)=>ground(x,-negativeZ));
     shadowPivot.position.set(x+.09,y+.047,z+.03);shadowPivot.rotation.copy(mount.root.rotation);
     shadow.material.opacity=.82-.28*rain;
-    head=camReady?head+headDelta(head,p.yaw)*(1-Math.exp(-dt*2.8)):p.yaw;
+    // Keep the chase camera in a radial, true-world basis. The chunk tangent
+    // frame may rotate every 128 m, but the camera must not roll with it.
+    localUp.set(x,y+RADIUS,z).normalize();
+    targetForward.set(p.fx,0,p.fz).projectOnPlane(localUp).normalize();
+    if(!camReady){
+      lookForward.copy(targetForward);camera.up.copy(localUp);
+    }else{
+      lookForward.projectOnPlane(localUp).normalize();
+      const error=lookForward.angleTo(targetForward);
+      const turn=Math.min(1-Math.exp(-dt*3.2),.99*dt/Math.max(.0001,error));
+      lookForward.lerp(targetForward,turn).normalize();
+      camera.up.lerp(localUp,1-Math.exp(-dt*7)).normalize();
+    }
+    right.crossVectors(lookForward,localUp).normalize();
     const w=wrap(s);
     const ledge=smooth(3050,3160,w)*(1-smooth(3345,3540,w));
     const lakeshore=smooth(4220,4290,w)*(1-smooth(4370,4450,w));
-    const framePan=freeCamera?0:.89*ledge-.25*lakeshore;
-    const angle=head+orbit+framePan,dist=zoom*(1+.025*gait);
-    eye.set(x+dist*Math.sin(angle)*Math.cos(height),y+2.05+dist*Math.sin(height)+(freeCamera?0:ledge*.62),z+dist*Math.cos(angle)*Math.cos(height));
-    eye.y=Math.max(eye.y,ground(eye.x,eye.z)+.48);
-    aim.set(x-1.20*Math.sin(head),y+1.83,z-1.20*Math.cos(head));
+    const desiredPan=freeCamera?0:.89*ledge-.25*lakeshore,desiredLift=freeCamera?0:ledge*.62;
+    if(!camReady){panBias=desiredPan;sceneLift=desiredLift;}
+    else{
+      panBias+=clamp((desiredPan-panBias)*(1-Math.exp(-dt*3.4)),-.55*dt,.55*dt);
+      sceneLift=lerp(sceneLift,desiredLift,1-Math.exp(-dt*2.8));
+    }
+    const angle=orbit+panBias,dist=zoom*(1+.017*(speed-1.65));
+    eye.set(x,y,z).addScaledVector(right,dist*Math.sin(angle)*Math.cos(height))
+      .addScaledVector(lookForward,-dist*Math.cos(angle)*Math.cos(height))
+      .addScaledVector(localUp,2.05+dist*Math.sin(height)+sceneLift);
+    eye.y=Math.max(eye.y,ground(eye.x,eye.z)+.46);
+    aim.set(x,y,z).addScaledVector(lookForward,1.20).addScaledVector(localUp,1.83);
     if(!camReady){camera.position.copy(eye);camLook.copy(aim);camReady=true;}
-    camera.position.lerp(eye,1-Math.exp(-dt*8.0));camLook.lerp(aim,1-Math.exp(-dt*8.8));camera.lookAt(camLook);
-    chunks(s,t);const flock=sky(hour,t,s,camera,mount.root.position,rain);
-    air(dt,t,s,speed,mount.feet,frame);rainEffect(t,camera.position,rain);
-    if(dt>0)sound.tick(contacts,{speed,t,dt,s,hour,rain,camera,flock});
+    camera.position.lerp(eye,1-Math.exp(-dt*6.5));camLook.lerp(aim,1-Math.exp(-dt*7.2));
+    // Preserve actual camera clearance even if the optional orbit crosses a slope.
+    const clearance=ground(camera.position.x,camera.position.z)+.30;
+    if(camera.position.y<clearance)camera.position.y=lerp(camera.position.y,clearance,1-Math.exp(-dt*18));
+    camera.lookAt(camLook);
+    chunks(s,t);sky(hour,t,s,camera,mount.root.position,rain,localUp);
+    birds.update(t,hour,rain,camera,mount.root.position,frame);
+    air(dt,t,s,speed,mount.feet,frame,p);rainEffect(t,camera.position,rain);
+    for(const hit of contacts)audioContacts.push({...hit,at:t-dt+hit.offset});
     const section=sections[segmentAt(s)].label,lap=Math.floor(s/LENGTH)+1;
     if(byId('section').textContent!==section)byId('section').textContent=section;
     if(byId('lap').textContent!==String(lap))byId('lap').textContent=lap;
@@ -140,8 +177,9 @@ function run(){
     const elapsed=Math.max(0,(now-previous)/1000);previous=now;
     if(!paused){
       resize();const dt=Math.min(.15,elapsed),steps=Math.max(1,Math.ceil(dt/.034));
+      audioContacts.length=0;
       for(let i=0;i<steps;i++)world(dt/steps);
-      renderRide(s,t,speed,frame);
+      renderRide(s,t,speed,frame);soundFrame(dt);
       if(elapsed<1){frameCost+=elapsed;sampleN++;if(sampleN===45){if(frameCost/sampleN>.038&&scale>.65){scale=Math.max(.65,scale*.82);lastW=0;}frameCost=sampleN=0;}}
     }
     requestAnimationFrame(draw);
@@ -149,12 +187,22 @@ function run(){
   if(debug){
     window.rideInspect={state:()=>({s,route:wrap(s),section:segmentAt(s),lap:Math.floor(s/LENGTH)+1,meters,lane,speed,gait,hour,t,rain,rainTarget,paused,orbit,
         position:mount.root.position.toArray(),mountYaw:mount.root.rotation.y,camera:camera.position.toArray(),
-        planet:surfacePoint(s,lane),planetCamera:camera.position.clone().applyMatrix4(frame.toPlanet).toArray(),planetFrame:frameId,length:LENGTH,
+        planet:surfacePoint(s,lane),planetCamera:camera.position.clone().applyMatrix4(frame.toPlanet).toArray(),
+        planetDirection:camera.getWorldDirection(cameraDir).transformDirection(frame.toPlanet).toArray(),
+        planetUp:camera.up.clone().transformDirection(frame.toPlanet).toArray(),planetFrame:frameId,length:LENGTH,panBias,
         chunks:chunks.inspect(),objects:scene.children.length,geometries:renderer.info.memory.geometries}),
-      motion:mount.inspect,audio:sound.inspect,
-      advance(seconds,render=true){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);if(render)renderRide(s,t,speed,frame);},
+      motion:mount.inspect,audio:sound.inspect,birds:birds.inspect,air:air.inspect,
+      advance(seconds,render=true){
+        const steps=Math.max(1,Math.ceil(seconds*30)),dt=seconds/steps;
+        for(let i=0;i<steps;i++){
+          audioContacts.length=0;world(dt);
+          if(sound.active())scene.updateMatrixWorld(true);
+          soundFrame(dt);
+        }
+        if(render)renderRide(s,t,speed,frame);
+      },
       setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;freeCamera=true;camReady=false;world(0);renderRide(s,t,speed,frame);},
-      jump(k,h){s=k;meters=k;hour=h;camReady=false;freeCamera=false;world(.016);renderRide(s,t,speed,frame);}};
+      jump(k,h){resetRideSound();s=k;meters=k;hour=h;camReady=false;freeCamera=false;orbit=baseOrbit;world(.016);renderRide(s,t,speed,frame);}};
   }
   if(!debug||!new URLSearchParams(location.search).has('manual'))requestAnimationFrame(draw);
 }
