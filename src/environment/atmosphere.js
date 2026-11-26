@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {ground,road,random,windTravel} from './land.js';
+import {at,ground,random,windTravel} from '../world/route.js';
 
 export function createTrailAir(scene){
   const roll=random(27641),capacity=180,particles=Array.from({length:capacity},()=>({life:0}));let next=0,verge=0,last=NaN;
@@ -27,17 +27,17 @@ export function createTrailAir(scene){
     }
     verge+=dt*(1.8+speed*.45);
     while(verge>=1){
-      verge--;const at=s+(roll()-.31)*12,x=road(at)+(roll()<.65?-1:1)*(2.12+roll()*1.85);
-      const h=ground(x,at)+.23+roll()*.62,n=2+Math.floor(roll()*3);
-      for(let i=0;i<n;i++)emit(x+(roll()-.5)*.48,h+roll()*.29,-at+(roll()-.5)*.62,false);
+      verge--;const spot=at(s+(roll()-.31)*12,(roll()<.65?-1:1)*(2.12+roll()*1.85));
+      const h=spot.y+.23+roll()*.62,n=2+Math.floor(roll()*3);
+      for(let i=0;i<n;i++)emit(spot.x+(roll()-.5)*.48,h+roll()*.29,spot.z+(roll()-.5)*.62,false);
     }
     let v=0;
     for(const b of particles){
       b.life-=dt;if(b.life<=0)continue;
       b.vy-=dt*(b.hoof?7.5:.43);b.x+=(b.vx+.22*Math.sin(3*t+b.a))*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;b.a+=b.spin*dt;
-      if(b.y<ground(b.x,-b.z)+.014){b.life=0;continue;}
+      if(b.y<ground(b.x,b.z)+.014){b.life=0;continue;}
       const fade=Math.min(1,b.life*7),len=b.length*fade,w=b.width*fade,ax=Math.cos(b.a)*len,ay=Math.sin(b.a)*len*.77,az=len*.38;
-      const write=(l,k,shade)=>{p.setXYZ(v,b.x+ax*l-w*k*Math.sin(b.a),b.y+ay*l+w*k*Math.cos(b.a),s+b.z+az*l+.008*k);c.setXYZ(v++,b.col.r*shade,b.col.g*shade,b.col.b*shade);};
+      const write=(l,k,shade)=>{p.setXYZ(v,b.x+ax*l-w*k*Math.sin(b.a),b.y+ay*l+w*k*Math.cos(b.a),b.z+az*l+.008*k);c.setXYZ(v++,b.col.r*shade,b.col.g*shade,b.col.b*shade);};
       write(-.5,0,.75);write(.08,1,1.15);write(.65,0,1);write(-.5,0,.75);write(.65,0,1);write(.08,-.6,.86);
     }
     g.setDrawRange(0,v);p.needsUpdate=c.needsUpdate=true;
@@ -86,7 +86,8 @@ function meadowMist(uniforms){
       const wx=wisp.x+travel,ws=wisp.s+travel*windAlong;
       const range=Math.hypot(wx-x,ws-s);
       if(range>=reach)continue;
-      uniforms.banks.value[n].set(wx,ground(wx,ws)+wisp.height*.35,s-ws);
+      if(n>=uniforms.banks.value.length)break;
+      uniforms.banks.value[n].set(wx,ground(wx,-ws)+wisp.height*.35,-ws);
       uniforms.radius.value[n].set(wisp.width,wisp.height,wisp.depth);
       uniforms.bankFade.value[n]=wisp.strength*(1-T.MathUtils.smoothstep(range,75,reach));
       n++;
@@ -96,12 +97,12 @@ function meadowMist(uniforms){
 }
 
 // Reproject the depth of the passing verges into the previous camera. The course's
-// floating origin is part of the transform. Reject distant depth taps at silhouettes.
+// world-space transform is fixed. Reject distant depth taps at silhouettes.
 export function createShutter(renderer,scene,camera,horse){
   if(!renderer.capabilities.isWebGL2)return ()=>renderer.render(scene,camera);
   const target=new T.WebGLRenderTarget(1,1,{depthTexture:new T.DepthTexture(1,1),samples:2});
   target.texture.colorSpace=T.SRGBColorSpace;
-  const size=new T.Vector2(),previous=new T.Matrix4(),current=new T.Matrix4(),shift=new T.Matrix4();
+  const size=new T.Vector2(),previous=new T.Matrix4(),current=new T.Matrix4();
   const u={color:{value:target.texture},depth:{value:target.depthTexture},inverseVP:{value:new T.Matrix4()},
     prior:{value:new T.Matrix4()},horseSpace:{value:new T.Matrix4()},pixel:{value:new T.Vector2()},shutter:{value:0}};
   Object.assign(u,{banks:{value:Array.from({length:16},()=>new T.Vector3())},radius:{value:Array.from({length:16},()=>new T.Vector3())},
@@ -154,7 +155,7 @@ gl_FragColor=vec4(base,1.);
   const pass=new T.Scene(),flat=new T.OrthographicCamera(-1,1,1,-1,0,1);pass.add(new T.Mesh(new T.PlaneGeometry(2,2),mat));
   let lastS=NaN,lastT=NaN;
   return (s,t,speed)=>{
-    updateMist(horse.position.x,s,t);
+    updateMist(horse.position.x,-horse.position.z,t);
     u.weatherTime.value=t;u.eye.value.copy(camera.position);u.mistColor.value.copy(scene.fog.color).multiplyScalar(1.07);
     renderer.getDrawingBufferSize(size);const resized=size.x!==target.width||size.y!==target.height;
     if(resized)target.setSize(size.x,size.y);
@@ -162,7 +163,7 @@ gl_FragColor=vec4(base,1.);
     current.multiplyMatrices(camera.projectionMatrix,camera.matrixWorldInverse);u.inverseVP.value.copy(current).invert();
     const dt=t-lastT,valid=!resized&&dt>0&&dt<.18&&Math.abs(s-lastS)<3;
     u.shutter.value=valid?Math.min(1,.017/dt)*T.MathUtils.smoothstep(speed,3,7):0;
-    u.prior.value.copy(valid?previous:current).multiply(shift.makeTranslation(0,0,valid?lastS-s:0));
+    u.prior.value.copy(valid?previous:current);
     u.horseSpace.value.copy(horse.matrixWorld).invert();u.pixel.value.set(1/size.x,1/size.y);
     renderer.render(pass,flat);previous.copy(current);lastS=s;lastT=t;
   };

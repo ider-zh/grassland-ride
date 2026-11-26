@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {meadowWind} from './land.js';
+import {meadowWind} from '../world/route.js';
 import {createMane,neckProfile} from './mane.js';
 import {createQuarters,barrelSection,chestFront} from './quarters.js';
 import {createTail} from './tail.js';
@@ -164,7 +164,7 @@ function horsehair(parent,mat,anchor,length,drop,width,seed){
     }attr.needsUpdate=true;g.computeVertexNormals();
   };
 }
-export function createMount(){
+export function createMount(floating=true){
   const root=new T.Group(),body=new T.Group(),rider=new T.Group(),neck=new T.Group();root.add(body);body.add(neck);
   const seat=new T.Group(),chest=new T.Group(),lap=new T.Group();
   body.add(seat);seat.add(chest,lap);chest.add(rider);rider.position.y=lap.position.y=-1.91;
@@ -336,7 +336,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.115,.057,.038),br);diffuseColor.rgb=
   }
   oval(rider,weave,0,2.446,.042,.213,.084,.141);
   line(rider,red,[[-.135,2.069,.098],[0,2.051,.154],[.148,2.075,.100]],.025);
-  const gait=createStride(root);
+  const gait=createStride(root,floating);
   // Batch rigid pieces that share a material and a joint. Streaming hair and cloth retain their own buffers.
   for(const joint of [body,neck,rider,headArt]){
     const batches=new Map();

@@ -86,7 +86,7 @@ function makeHoof(root){
   const g=new T.BufferGeometry();g.setIndex(idx);g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.computeVertexNormals();
   const shoe=new T.Mesh(g,new T.MeshStandardMaterial({color:0x443d34,roughness:.65,side:T.DoubleSide}));root.add(shoe);return shoe;
 }
-export function createStride(root){
+export function createStride(root,floating=true){
   const feet=Array.from({length:4},(_,i)=>{
     const fore=i<2,side=i%2?1:-1;
     return {fore,side,x:side*(fore?.205:.235),z:fore?-.54:.57,
@@ -125,7 +125,7 @@ export function createStride(root){
       const arc=sine(Math.PI*u)**2*(1+.42*sine(tau*u));
       const lead=fast*(i===1?-.10:i===2?.075:0);
       predicted.set(f.x+f.side*.025*arc,0,f.z+lead+reach);
-      world.copy(predicted).applyMatrix4(root.matrixWorld);world.z-=distance;
+      world.copy(predicted).applyMatrix4(root.matrixWorld);world.z-=floating?distance:0;
       world.y=terrain(world.x,-world.z);
       if(stance){
         if(reset||!f.stance){f.anchor.copy(world);if(!reset)pose.impacts++;}
@@ -138,7 +138,7 @@ export function createStride(root){
         world.addScaledVector(f.residual,1-smooth(u/.44));
         world.y=terrain(world.x,-world.z)+lift*arc;
       }
-      f.stance=stance;f.sole.copy(world);world.z+=distance;
+      f.stance=stance;f.sole.copy(world);world.z+=floating?distance:0;
       const sole=local.copy(world).applyMatrix4(inverse);
       // Toe-off rotates the heel forward about the toe. The heel clears the ground before lift.
       const breakover=.38+(f.fore?0:.23*fast);

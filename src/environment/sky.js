@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {random} from './land.js';
+import {random} from '../world/route.js';
 
 const clamp=(x,a,b)=>Math.min(b,Math.max(a,x));
 function hash(x,z){const a=Math.sin(x*127.1+z*311.7)*43758.5453;return a-Math.floor(a);}
@@ -122,7 +122,15 @@ gl_FragColor=vec4(col,1.);
 #include <colorspace_fragment>
 }`}));
   sky.renderOrder=-10;scene.add(sky);
-  const peaks=mountain(scene);
+  const peaks=mountain(scene);peaks.name="fixed-snowline";
+  // Three overlapping faces of the same stationary mountain belt. No camera-
+  // relative translation and no changes when the route crosses a biome boundary.
+  for(const [yaw,scale,offset] of [[2.08,.82,-22],[-2.04,1.06,-17]]){
+    const face=new T.Group();
+    for(const part of peaks.children.slice(0,3))face.add(part.clone());
+    face.rotation.y=yaw;face.scale.set(scale,scale,scale);face.position.y=offset;
+    peaks.add(face);
+  }
   const birds=new T.Group(), wings=[];
   const r=random(885);
   for(let i=0;i<7;i++){
@@ -134,19 +142,23 @@ gl_FragColor=vec4(col,1.);
     bird.userData={i,x:r()*21,y:r()*4,z:r()*13};wings.push(pair);birds.add(bird);
   }
   scene.add(birds);
-  return (hour,t,s,camera,subject)=>{
+  const storm=new T.Color('#71888e');
+  return (hour,t,s,camera,subject,rain=0)=>{
     let j=0;while(j<keys.length-2&&hour>keys[j+1][0])j++;
     const a=keys[j],b=keys[j+1];let u=(hour-a[0])/(b[0]-a[0]);u=u*u*(3-2*u);
     [U.zenith.value,U.horizon.value,U.lit.value,U.shade.value,sun.color,hemi.color,scene.fog.color].forEach((c,i)=>c.copy(a[i+1]).lerp(b[i+1],u));
     sun.intensity=T.MathUtils.lerp(a[8],b[8],u);hemi.intensity=T.MathUtils.lerp(a[9],b[9],u);
+    U.zenith.value.lerp(storm,.66*rain);U.horizon.value.lerp(storm,.48*rain);
+    scene.fog.color.lerp(storm,.61*rain);scene.fog.density=.0026+.0037*rain;
+    sun.intensity*=1-.72*rain;hemi.intensity*=1-.23*rain;
     const phase=(hour-6)*Math.PI/12;
     U.sunDir.value.set(-Math.cos(phase)*.91,Math.max(.19,Math.sin(phase)*.92),.38+Math.sin(phase)*.18).normalize();
     sun.target.position.copy(subject);sun.position.copy(subject).addScaledVector(U.sunDir.value,29);
     U.clock.value=t%100000;U.night.value=clamp((.9-hemi.intensity)*2,0,1);
-    sky.position.copy(camera.position);peaks.position.set(camera.position.x*.79+Math.sin(s*.0011)*52,0,camera.position.z);
+    sky.position.copy(camera.position);
     const flight=(t+9)%53;birds.visible=flight<25;
     if(birds.visible)birds.children.forEach((bird,i)=>{
-      const d=bird.userData;bird.position.set(camera.position.x+flight*6-79+d.x,23+d.y+Math.sin(t*.32+i)*.6,-75+d.z);
+      const d=bird.userData;bird.position.set(camera.position.x+flight*6-79+d.x,23+d.y+Math.sin(t*.32+i)*.6,camera.position.z-75+d.z);
       bird.rotation.y=-1.15;const flap=.14+.42*Math.sin(t*5.4+i)*Math.max(0,Math.sin(t*.68+i));
       wings[i][0].rotation.z=-flap;wings[i][1].rotation.z=flap;
     });

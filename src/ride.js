@@ -1,25 +1,31 @@
 import * as T from 'three';
-import {road,ground,createLand} from './land.js';
-import {createSky} from './sky.js';
-import {createTrailAir,createShutter} from './weather.js';
-import {createMount} from './mount.js';
+import {at,ground,wrap,segmentAt,LENGTH} from './world/route.js';
+import {createChunks} from './world/chunks.js';
+import {createSky} from './environment/sky.js';
+import {createTrailAir,createShutter} from './environment/atmosphere.js';
+import {createRain} from './environment/rain.js';
+import {createMount} from './rider/mount.js';
 
 const byId=id=>document.getElementById(id),card=byId('msgCard'),canvas=byId('view');
 const clamp=T.MathUtils.clamp,lerp=T.MathUtils.lerp;
 function soundscape(){
-  let ctx,master,noise,wind,on=false;
+  let ctx,master,noise,wind,rainGain,on=false;
   function init(){
     ctx=new AudioContext();master=ctx.createGain();master.gain.value=0;master.connect(ctx.destination);
     noise=ctx.createBuffer(1,ctx.sampleRate*3,ctx.sampleRate);const d=noise.getChannelData(0);
     let brown=0;for(let i=0;i<d.length;i++){brown=.94*brown+.06*(Math.random()*2-1);d[i]=brown*2.6;}
     const src=ctx.createBufferSource(),filter=ctx.createBiquadFilter();src.buffer=noise;src.loop=true;
     wind=ctx.createGain();wind.gain.value=.11;filter.type='lowpass';filter.frequency.value=760;
-    src.connect(filter).connect(wind).connect(master);src.start();
+    src.connect(filter).connect(wind).connect(master);
+    const rainTone=ctx.createBiquadFilter();rainTone.type='highpass';rainTone.frequency.value=1200;
+    rainGain=ctx.createGain();rainGain.gain.value=0;
+    src.connect(rainTone).connect(rainGain).connect(master);src.start();
   }
   function gains(paused){if(ctx)master.gain.setTargetAtTime(on&&!paused?.65:0,ctx.currentTime,.06);}
   return {async toggle(paused){if(!ctx)init();await ctx.resume();on=!on;gains(paused);return on;},gains,
-    tick(impacts,s,t){
+    tick(impacts,s,t,rain){
       if(!on||!ctx)return;const now=ctx.currentTime;
+      rainGain.gain.setTargetAtTime(rain*.26,now,.3);
       wind.gain.setTargetAtTime(.09+s*.006+.035*Math.sin(t*.73),now,.25);
       if(impacts){
         const osc=ctx.createOscillator(),g=ctx.createGain();osc.frequency.setValueAtTime(132+Math.random()*36,now);osc.frequency.exponentialRampToValueAtTime(44,now+.10);
@@ -34,8 +40,8 @@ function run(){
   const renderer=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
   renderer.outputColorSpace=T.SRGBColorSpace;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
   const scene=new T.Scene(),camera=new T.PerspectiveCamera(48,1,.08,790);
-  const sky=createSky(scene),land=createLand(scene),mount=createMount(),sound=soundscape();scene.add(mount.root);
-  const air=createTrailAir(scene),renderRide=createShutter(renderer,scene,camera,mount.root);
+  const sky=createSky(scene),chunks=createChunks(scene),mount=createMount(false),sound=soundscape();scene.add(mount.root);
+  const air=createTrailAir(scene),rainEffect=createRain(scene),renderRide=createShutter(renderer,scene,camera,mount.root);
   const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;
   const ctx=shadowCanvas.getContext('2d'),grad=ctx.createRadialGradient(64,64,4,64,64,63);
   grad.addColorStop(0,'rgba(28,24,17,.68)');grad.addColorStop(.48,'rgba(30,30,17,.42)');grad.addColorStop(1,'rgba(40,35,21,0)');ctx.fillStyle=grad;ctx.fillRect(0,0,128,128);
@@ -45,6 +51,9 @@ function run(){
   let gait=0,speed=speeds[0],s=0,meters=0,t=0,hour=7.33,lane=0,sideV=0,touch=0,paused=false;
   let orbit=-.60,height=.045,zoom=5.30,drag=null,head=0,camReady=false;
   let dayBlend=0,skipHours=0,steerLean=0;
+  let rain=0,rainTarget=0;
+  const sections=['驿镇','草原','山脊'],debug=new URLSearchParams(location.search).has('inspect');
+  const headDelta=(from,to)=>Math.atan2(Math.sin(to-from),Math.cos(to-from));
   const aim=new T.Vector3(),eye=new T.Vector3(),camLook=new T.Vector3();
   function setGait(step){gait=clamp(gait+step,0,2);byId('gait').textContent=names[gait];document.querySelectorAll('#marks i').forEach((el,i)=>el.classList.toggle('on',i<=gait));}
   function setPause(value){
@@ -58,6 +67,10 @@ function run(){
   }
   async function audio(){const on=await sound.toggle(paused);byId('audioBtn').setAttribute('aria-label',on?'关闭环境声':'开启环境声');
     byId('soundMark').setAttribute('d',on?'M15 8q5 4 0 8m3-11q8 7 0 14':'m16 9 6 6m0-6-6 6');}
+  byId('rainBtn').onclick=()=>{
+    rainTarget=1-rainTarget;byId('rainBtn').textContent=rainTarget?'雨天':'晴天';
+    byId('rainBtn').setAttribute('aria-pressed',String(Boolean(rainTarget)));
+  };
   byId('timeBtn').onclick=nextTime;byId('audioBtn').onclick=audio;byId('pauseBtn').onclick=()=>setPause(!paused);
   const keys=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyA','KeyD','Space','KeyT','KeyM'];
   addEventListener('keydown',e=>{
@@ -88,26 +101,32 @@ function run(){
     t+=dt;speed=lerp(speed,speeds[gait],1-Math.exp(-dt*1.7));
     const steer=touch||Number(held.has('KeyD')||held.has('ArrowRight'))-Number(held.has('KeyA')||held.has('ArrowLeft'));
     sideV=lerp(sideV,steer*Math.min(1.5,.52+speed*.14),1-Math.exp(-dt*4));lane=clamp(lane+sideV*dt,-1.40,1.40);
-    const tangent=(road(s+.5)-road(s-.5));s+=speed*dt/Math.hypot(1,tangent);meters+=speed*dt;
+    s+=speed*dt;meters+=speed*dt;
     if(dayBlend>0){const part=Math.min(dt,dayBlend);hour+=skipHours*part/dayBlend;skipHours*=1-part/dayBlend;dayBlend-=part;}
     hour=(hour+dt/16)%24;
-    const x=road(s)+lane,y=ground(x,s),grade=(ground(road(s+.5)+lane,s+.5)-ground(road(s-.5)+lane,s-.5))/Math.hypot(1,tangent);
-    const theta=-Math.atan(tangent),pitch=Math.atan(grade),actualV=Math.abs(lane)>=1.399&&Math.sign(sideV)===Math.sign(lane)?0:sideV;
+    rain=lerp(rain,rainTarget,1-Math.exp(-dt*1.15));
+    const p=at(s,lane),prev=at(s-.45,lane),next=at(s+.45,lane);
+    const {x,y,z}=p,pitch=Math.atan2(next.y-prev.y,Math.hypot(next.x-prev.x,next.z-prev.z));
+    const actualV=Math.abs(lane)>=1.399&&Math.sign(sideV)===Math.sign(lane)?0:sideV;
     steerLean=camReady?lerp(steerLean,actualV,1-Math.exp(-dt*6.5)):actualV;
-    const yaw=theta-Math.atan2(steerLean,speed)*.7;
-    mount.root.position.set(x,y,0);mount.root.rotation.order='YXZ';mount.root.rotation.set(pitch,yaw,0,'YXZ');
-    const impacts=mount.update(t,dt,speed,steerLean,s,ground);
-    shadowPivot.position.set(x+.09,y+.052,.03);shadowPivot.rotation.copy(mount.root.rotation);
-    shadow.material.opacity=.82;
-    head=camReady?lerp(head,theta,1-Math.exp(-dt*2.8)):theta;
+    const yaw=p.yaw-Math.atan2(steerLean,speed)*.7;
+    mount.root.position.set(x,y,z);mount.root.rotation.set(pitch,yaw,0,'YXZ');
+    const impacts=mount.update(t,dt,speed,steerLean,s,(x,negativeZ)=>ground(x,-negativeZ));
+    shadowPivot.position.set(x+.09,y+.047,z+.03);shadowPivot.rotation.copy(mount.root.rotation);
+    shadow.material.opacity=.82-.28*rain;
+    head=camReady?head+headDelta(head,p.yaw)*(1-Math.exp(-dt*2.8)):p.yaw;
     const angle=head+orbit,dist=zoom*(1+.025*gait);
-    eye.set(x+dist*Math.sin(angle)*Math.cos(height),y+2.05+dist*Math.sin(height),dist*Math.cos(angle)*Math.cos(height));
-    eye.y=Math.max(eye.y,ground(eye.x,s-eye.z)+.48);
-    // Look slightly above the saddle so that the snowline stays in the rider's field of view.
-    aim.set(x-.67*Math.sin(head),y+1.72,-.67*Math.cos(head));
+    eye.set(x+dist*Math.sin(angle)*Math.cos(height),y+2.05+dist*Math.sin(height),z+dist*Math.cos(angle)*Math.cos(height));
+    eye.y=Math.max(eye.y,ground(eye.x,eye.z)+.48);
+    aim.set(x-.67*Math.sin(head),y+1.72,z-.67*Math.cos(head));
     if(!camReady){camera.position.copy(eye);camLook.copy(aim);camReady=true;}
     camera.position.lerp(eye,1-Math.exp(-dt*8.0));camLook.lerp(aim,1-Math.exp(-dt*8.8));camera.lookAt(camLook);
-    land(s,t,Math.min(1,scale));sky(hour,t,s,camera,mount.root.position);air(dt,t,s,speed,mount.feet);sound.tick(impacts,speed,t);
+    chunks(s,t);sky(hour,t,s,camera,mount.root.position,rain);
+    air(dt,t,s,speed,mount.feet);rainEffect(t,camera.position,rain);
+    sound.tick(impacts,speed,t,rain);
+    const section=sections[segmentAt(s)],lap=Math.floor(s/LENGTH)+1;
+    if(byId('section').textContent!==section)byId('section').textContent=section;
+    if(byId('lap').textContent!==String(lap))byId('lap').textContent=lap;
     byId('clock').textContent=[Math.floor(hour),Math.floor((hour%1)*60)].map(v=>String(v).padStart(2,'0')).join(':');
     byId('時').textContent=hour<5?'星夜':hour<9?'清晨':hour<16?'白昼':hour<20?'薄暮':'星夜';
     byId('distance').textContent=meters<1000?Math.floor(meters):(meters/1000).toFixed(2);byId('unit').textContent=meters<1000?'m':'km';
@@ -120,16 +139,20 @@ function run(){
       resize();const dt=Math.min(.15,elapsed),steps=Math.max(1,Math.ceil(dt/.034));
       for(let i=0;i<steps;i++)world(dt/steps);
       renderRide(s,t,speed);
-      if(elapsed<.25){frameCost+=elapsed;sampleN++;if(sampleN===90){if(frameCost/sampleN>.038&&scale>.70){scale=Math.max(.70,scale*.84);lastW=0;}frameCost=sampleN=0;}}
+      if(elapsed<1){frameCost+=elapsed;sampleN++;if(sampleN===45){if(frameCost/sampleN>.038&&scale>.65){scale=Math.max(.65,scale*.82);lastW=0;}frameCost=sampleN=0;}}
     }
     requestAnimationFrame(draw);
   }
-  if(new URLSearchParams(location.search).has('inspect')){
-    window.rideInspect={state:()=>({s,meters,lane,speed,gait,hour,t,paused,orbit,objects:scene.children.length,geometries:renderer.info.memory.geometries}),
+  if(debug){
+    window.rideInspect={state:()=>({s,route:wrap(s),section:segmentAt(s),lap:Math.floor(s/LENGTH)+1,meters,lane,speed,gait,hour,t,rain,rainTarget,paused,orbit,
+        position:mount.root.position.toArray(),mountYaw:mount.root.rotation.y,camera:camera.position.toArray(),
+        snowline:scene.getObjectByName('fixed-snowline').position.toArray(),
+        chunks:chunks.inspect(),objects:scene.children.length,geometries:renderer.info.memory.geometries}),
       motion:mount.inspect,
-      advance(seconds){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);renderRide(s,t,speed);},
+      advance(seconds,render=true){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);if(render)renderRide(s,t,speed);},
+      setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;camReady=false;world(0);renderRide(s,t,speed);},
       jump(k,h){s=k;meters=k;hour=h;camReady=false;world(.016);renderRide(s,t,speed);}};
   }
-  requestAnimationFrame(draw);
+  if(!debug||!new URLSearchParams(location.search).has('manual'))requestAnimationFrame(draw);
 }
 try{run();}catch(err){card.hidden=false;card.textContent='场景未能启动。请在启用硬件加速的 Chrome 或 Edge 中打开。 '+err.message;console.error(err);}

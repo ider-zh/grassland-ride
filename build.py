@@ -7,7 +7,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent
 SOURCE = ROOT / "src"
 VENDOR = ROOT / "vendor"
-LOCAL_IMPORT = re.compile(r"""(\bfrom\s+)(['"])\./([\w-]+)\.js\2""")
+LOCAL_IMPORT = re.compile(r"""(\bfrom\s+)(['"])((?:\./|\.\./)[\w./-]+\.js)\2""")
 
 
 def module_url(code):
@@ -17,22 +17,23 @@ def module_url(code):
 
 def build():
     imports = {"three": module_url((VENDOR / "three.module.min.js").read_text(encoding="utf-8"))}
-    modules = {path.stem: path for path in sorted(SOURCE.glob("*.js"))}
+    modules = {path.resolve(): path.relative_to(SOURCE).with_suffix("").as_posix()
+               for path in sorted(SOURCE.rglob("*.js"))}
 
-    def resolve(match):
-        name = match[3]
-        if name not in modules:
-            raise ValueError(f"Unknown local import: {name}")
-        return f'{match[1]}"ride-{name}"'
+    for path, name in modules.items():
+        def resolve(match):
+            imported = (path.parent / match[3]).resolve()
+            if imported not in modules:
+                raise ValueError(f"Unknown local import in {name}: {match[3]}")
+            return f'{match[1]}"ride/{modules[imported]}"'
 
-    for name, path in modules.items():
         code = LOCAL_IMPORT.sub(resolve, path.read_text(encoding="utf-8"))
-        imports["ride-" + name] = module_url(code)
+        imports["ride/" + name] = module_url(code)
 
     license_text = (VENDOR / "LICENSE-three.txt").read_text(encoding="utf-8")
     tags = (f"<!-- Three.js\n{license_text}\n-->\n"
             + '<script type="importmap">' + json.dumps({"imports": imports}) + '</script>\n'
-            + '<script type="module">import "ride-ride";</script>')
+            + '<script type="module">import "ride/ride";</script>')
     page = (SOURCE / "shell.html").read_text(encoding="utf-8")
     if page.count("<!--MODULES-->") != 1:
         raise ValueError("The HTML template needs exactly one module placeholder")

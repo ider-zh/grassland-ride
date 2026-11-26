@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {meadowWind} from './land.js';
+import {meadowWind} from '../world/route.js';
 
 const dockSegments=2, freeSegments=10, rings=dockSegments+freeSegments+1, sides=6;
 const tau=Math.PI*2, vec=()=>new T.Vector3(), vectors=n=>Array.from({length:n},vec);
