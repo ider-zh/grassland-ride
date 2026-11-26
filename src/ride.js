@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {surfacePoint,wrap,segmentAt,sections,LENGTH,FRAME_SPAN} from './world/route.js';
+import {surfacePoint,wrap,segmentAt,sections,LENGTH,FRAME_SPAN,smooth} from './world/route.js';
 import {createChunks} from './world/chunks.js';
 import {createFrame} from './world/frame.js';
 import {createSky} from './environment/sky.js';
@@ -23,7 +23,7 @@ function run(){
   const shadowPivot=new T.Group();shadowPivot.add(shadow);scene.add(shadowPivot);
   const speeds=[1.65,3.75,7.4],names=['慢步','小跑','疾驰'],held=new Set();
   let gait=0,speed=speeds[0],s=0,meters=0,t=0,hour=7.33,lane=0,sideV=0,touch=0,paused=false;
-  let orbit=-.60,height=.045,zoom=5.30,drag=null,head=0,camReady=false;
+  let orbit=-.47,height=.075,zoom=5.85,drag=null,head=0,camReady=false,freeCamera=false;
   let dayBlend=0,skipHours=0,steerLean=0;
   let rain=0,rainTarget=0;
   const debug=new URLSearchParams(location.search).has('inspect');
@@ -62,7 +62,7 @@ function run(){
   };
   byId('timeBtn').onclick=nextTime;byId('audioBtn').onclick=audio;byId('pauseBtn').onclick=()=>setPause(!paused);
   byId('routeGuide').querySelectorAll('[data-stop]').forEach(button=>button.onclick=()=>{
-    s=Number(button.dataset.stop);meters=s;camReady=false;frameId=NaN;
+    s=Number(button.dataset.stop);meters=s;camReady=false;frameId=NaN;freeCamera=false;
     byId('routeGuide').open=false;
     world(.016);renderRide(s,t,speed,frame);
   });
@@ -79,7 +79,7 @@ function run(){
   addEventListener('keyup',e=>held.delete(e.code));addEventListener('blur',()=>{held.clear();touch=0;drag=null;});
   document.addEventListener('visibilitychange',()=>{if(document.hidden)setPause(true);});
   canvas.onpointerdown=e=>{if(paused)return;canvas.setPointerCapture(e.pointerId);drag=[e.clientX,e.clientY];};
-  canvas.onpointermove=e=>{if(!drag)return;orbit-=(e.clientX-drag[0])*.006;height=clamp(height+(e.clientY-drag[1])*.003,-.13,.74);drag=[e.clientX,e.clientY];};
+  canvas.onpointermove=e=>{if(!drag)return;if(Math.abs(e.clientX-drag[0])+Math.abs(e.clientY-drag[1])>1)freeCamera=true;orbit-=(e.clientX-drag[0])*.006;height=clamp(height+(e.clientY-drag[1])*.003,-.13,.74);drag=[e.clientX,e.clientY];};
   canvas.onpointercancel=canvas.onpointerup=()=>drag=null;
   canvas.addEventListener('wheel',e=>{e.preventDefault();zoom=clamp(zoom+Math.sign(e.deltaY)*.35,3.1,9);},{passive:false});
   document.querySelectorAll('[data-speed]').forEach(b=>b.onclick=()=>{if(!paused)setGait(+b.dataset.speed);});
@@ -114,10 +114,14 @@ function run(){
     shadowPivot.position.set(x+.09,y+.047,z+.03);shadowPivot.rotation.copy(mount.root.rotation);
     shadow.material.opacity=.82-.28*rain;
     head=camReady?head+headDelta(head,p.yaw)*(1-Math.exp(-dt*2.8)):p.yaw;
-    const angle=head+orbit,dist=zoom*(1+.025*gait);
-    eye.set(x+dist*Math.sin(angle)*Math.cos(height),y+2.05+dist*Math.sin(height),z+dist*Math.cos(angle)*Math.cos(height));
+    const w=wrap(s);
+    const ledge=smooth(3050,3160,w)*(1-smooth(3345,3540,w));
+    const lakeshore=smooth(4220,4290,w)*(1-smooth(4370,4450,w));
+    const framePan=freeCamera?0:.89*ledge-.25*lakeshore;
+    const angle=head+orbit+framePan,dist=zoom*(1+.025*gait);
+    eye.set(x+dist*Math.sin(angle)*Math.cos(height),y+2.05+dist*Math.sin(height)+(freeCamera?0:ledge*.62),z+dist*Math.cos(angle)*Math.cos(height));
     eye.y=Math.max(eye.y,ground(eye.x,eye.z)+.48);
-    aim.set(x-.67*Math.sin(head),y+1.72,z-.67*Math.cos(head));
+    aim.set(x-1.20*Math.sin(head),y+1.83,z-1.20*Math.cos(head));
     if(!camReady){camera.position.copy(eye);camLook.copy(aim);camReady=true;}
     camera.position.lerp(eye,1-Math.exp(-dt*8.0));camLook.lerp(aim,1-Math.exp(-dt*8.8));camera.lookAt(camLook);
     chunks(s,t);const flock=sky(hour,t,s,camera,mount.root.position,rain);
@@ -149,8 +153,8 @@ function run(){
         chunks:chunks.inspect(),objects:scene.children.length,geometries:renderer.info.memory.geometries}),
       motion:mount.inspect,audio:sound.inspect,
       advance(seconds,render=true){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);if(render)renderRide(s,t,speed,frame);},
-      setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;camReady=false;world(0);renderRide(s,t,speed,frame);},
-      jump(k,h){s=k;meters=k;hour=h;camReady=false;world(.016);renderRide(s,t,speed,frame);}};
+      setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;freeCamera=true;camReady=false;world(0);renderRide(s,t,speed,frame);},
+      jump(k,h){s=k;meters=k;hour=h;camReady=false;freeCamera=false;world(.016);renderRide(s,t,speed,frame);}};
   }
   if(!debug||!new URLSearchParams(location.search).has('manual'))requestAnimationFrame(draw);
 }

@@ -2,6 +2,9 @@
 // revolution of a 3D sphere with occasional smooth lateral bends, not a flat oval.
 export const CHUNK=32, LENGTH=6912, COUNT=LENGTH/CHUNK, ROAD_HALF=2.4, TAU=2*Math.PI;
 export const RADIUS=LENGTH/TAU, FRAME_SPAN=128;
+export const TARN={s:4320,l:48,length:86,width:29,level:14.6};
+export const tarnShape=(s,l)=>Math.hypot((s-TARN.s+.19*(l-TARN.l))/TARN.length,
+  (l-TARN.l+4*Math.sin((s-TARN.s)*.029))/TARN.width);
 export const sections=[
  {start:0,label:'驿镇',scenery:0,sound:0},
  {start:192,label:'长风草原',scenery:1,sound:1},
@@ -57,32 +60,50 @@ export function relief(s,l){
     173*bell(signed(s,2730),252)*bell(l+178,81)+
     137*bell(signed(s,2900),265)*bell(l-191,104)+
     95*bell(signed(s,3300),244)*bell(l-180,140)+
+    131*bell(signed(s,3420),159)*bell(l+84,94)+
+    69*bell(signed(s,3390),147)*bell(l-5,52)+
     127*bell(signed(s,3110),319)*bell(l+221,104);
   const spurs=(12+8*Math.sin(l*.069+a*96)+4.5*Math.sin(l*.11-a*116))*
     bell(signed(s,2880),630)*smooth(39,129,Math.abs(l));
   // Behind the pass an open elevated basin with low tablelands, not a second fake snowy skybox.
   const table=20*bell(signed(s,4390),560)*(1-.72*bell(l,91))+
     37*bell(signed(s,4660),190)*bell(l+167,130)+
-    34*bell(signed(s,4160),215)*bell(l-172,138);
-  const spill=(15+9*bell(l-20,100))*smooth(2950,3120,s)*(1-smooth(3450,3670,s))*
-    smooth(15,82,bend(s)-l)*bell(l-40,225);
+    34*bell(signed(s,4160),215)*bell(l-172,138)+
+    27*bell(signed(s,4500),91)*bell(l-84,51)+
+    13*bell(signed(s,4465),58)*bell(l-95,45);
+  const spill=(24+14*bell(l-28,127))*smooth(2950,3120,s)*(1-smooth(3450,3670,s))*
+    smooth(9,58,bend(s)-l)*bell(l-40,225);
   const natural=2+blanket+texture+foot+massif+spurs+table-spill;
   const mountainRoad=smooth(2230,2620,s)*13
     +smooth(2740,3195,s)*63
     -smooth(3350,4015,s)*64
-    -smooth(4410,5050,s)*12;
+    -smooth(4410,5050,s)*12
+    +11*smooth(3980,4170,s)*(1-smooth(4245,4405,s));
   const mainRoad=2+blanket*.48+mountainRoad;
   // A graded shelf follows the trail in the mountain, then blends back into
   // the real slopes. This keeps sharp rock details from becoming road ramps.
   const gradeWeight=(1-smooth(6,38,Math.abs(l-bend(s))))*
     smooth(2020,2300,s)*(1-smooth(4750,5070,s));
-  return natural+(mainRoad-natural)*gradeWeight;
+  const apron=natural+(mainRoad-natural)*gradeWeight;
+  const left=bend(s)-l;
+  const ledge=smooth(3060,3150,s)*(1-smooth(3335,3485,s))*
+    smooth(3.85,11,left)*(1-smooth(62,112,left));
+  const below=mainRoad-2 - 30*smooth(4.25,32,left) - 15*smooth(20,61,left);
+  const terrain=apron+(Math.min(apron,below)-apron)*ledge;
+  const basin=tarnShape(s,l);
+  const shore=(1-smooth(.63,1.12,basin))*smooth(13,25,l);
+  const basinFloor=9.1+.7*Math.cos(l*.19+s*.06);
+  const outlet=smooth(4210,4260,s)*(1-smooth(4360,4410,s))*smooth(9,21,l-bend(s))*(1-smooth(25,42,l));
+  const openTerrain=terrain+(12.8+.55*Math.cos(s*.072+l*.08)-terrain)*outlet*.82;
+  const raisedBank=5.2*smooth(.88,1.05,basin)*(1-smooth(1.08,1.24,basin))*smooth(24,44,l);
+  return openTerrain+(basinFloor-openTerrain)*shore+raisedBank;
 }
-export function globePoint(s,l,down=0){
+export function arcPoint(s,l,altitude){
   const a=wrap(s)/RADIUS,lat=l/RADIUS,cos=Math.cos(lat);
-  const radius=RADIUS+relief(s,l)-down;
+  const radius=RADIUS+altitude;
   return {x:radius*Math.sin(a)*cos,y:-radius*Math.sin(lat),z:radius*Math.cos(a)*cos};
 }
+export const globePoint=(s,l,down=0)=>arcPoint(s,l,relief(s,l)-down);
 export const surfacePoint=(s,lateral=0,down=0)=>globePoint(s,bend(s)+lateral,down);
 export const roadLateral=(s)=>bend(s);
 export function geographic(x,y,z){

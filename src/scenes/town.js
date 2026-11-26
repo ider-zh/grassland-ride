@@ -4,7 +4,9 @@ import * as T from 'three';
 // Human-scaled frontages and a compact square are built from shared instanced primitives.
 const BOX=new T.BoxGeometry(1,1,1);
 const ROCK=new T.IcosahedronGeometry(1,0);
+const LEAF=new T.IcosahedronGeometry(1,1);
 const POST=new T.CylinderGeometry(1,1,1,10);
+const CONE=new T.ConeGeometry(1,1,8);
 const ARCH=new T.CylinderGeometry(1,1,1,18,1,true);
 const gableShape=new T.Shape();
 gableShape.moveTo(-.5,0);gableShape.lineTo(.5,0);gableShape.lineTo(0,1);gableShape.closePath();
@@ -32,8 +34,10 @@ material.onBeforeCompile=sh=>{
   `+sh.fragmentShader.replace('#include <color_fragment>',`
     #include <color_fragment>
     float film=townNoise(townP*vec3(2.6,4.1,2.6));
-    float fleck=townNoise(townP*20.);
-    diffuseColor.rgb*=0.91+0.14*film+0.04*fleck;
+    float fleck=townNoise(townP*24.);
+    float worn=townNoise(townP*vec3(1.1,.42,1.1));
+    float streak=townNoise(townP*vec3(5.2,.82,5.2));
+    diffuseColor.rgb*=0.83+0.13*film+0.055*fleck+0.11*worn-0.05*smoothstep(.48,.86,streak);
   `);
 };
 const timber='#4c3829',edgeWood='#72513a',shadow='#302820';
@@ -117,26 +121,56 @@ export function buildTown({group,start,end,at,random:r}){
 
   function house(s,lateral,w,d,h,kind,turn=0){
     const b=attach(at,s,lateral,Math.sign(lateral)*rad+turn);
-    const inn=kind==='inn',barn=kind==='workshop',sm=kind==='cottage';
-    const plaster=choose(cream,r),shade=choose(shingle,r),foot=barn?1.32:.95;
-    const eaves=h,rise=w*(inn?.43:barn?.42:.51);
+    const inn=kind==='inn',barn=kind==='workshop',sm=kind==='cottage',was=kind==='stone';
+    const plaster=inn?'#cba680':was?'#a79c88':barn?'#b9bca5':choose(cream,r);
+    const shade=inn?'#68463a':was?'#535855':barn?'#5f4d42':choose(shingle,r),foot=was?2.7:barn?1.32:.95;
+    const eaves=h,rise=w*(inn?.48:barn?.39:sm?.39:.54);
     let low=b.y;
     for(const a of [-.51,0,.51])for(const x of [-.52,.52])low=Math.min(low,at(s+a*w,lateral+x*d).y);
     base(b,w,d,foot,.48+b.y-low);
     box(b,0,(eaves+foot)/2,0,w,eaves-foot,d,plaster);
-    emit(GABLE,b,0,eaves,0,w,rise,d,plaster);
-    roof(b,w,d,eaves,rise,shade);
+    // Face some eaves, not every gable, toward the road.
+    if(was){
+      const cross={...b,yaw:b.yaw+rad};
+      emit(GABLE,cross,0,eaves,0,d,rise*.67,w,plaster);
+      roof(cross,d,w,eaves,rise*.67,shade);
+      for(const a of [-1,1]){
+        box(b,a*(w*.5-.05),eaves-.24,0,.12,.46,d+.18,stone[3]);
+        box(b,a*(w*.5-.05),eaves-.79,0,.115,.16,d+.10,stone[1]);
+      }
+    }else{
+      emit(GABLE,b,0,eaves,0,w,rise,d,plaster);
+      roof(b,w,d,eaves,rise,shade);
+    }
+    const plant=(px,py,pz)=>planter(b,px,py,pz,.93);
+    if(inn){
+      // A stepped attic bay breaks the main roof line and identifies the inn.
+      const bay=offset(b,w*.25,0,-d*.5+.33),ww=3.50,dd=2.8,top=eaves+rise*.40,peak=1.47;
+      box(bay,0,(eaves-1.01+top)*.5,0,ww,top-(eaves-1.01),dd,plaster);
+      emit(GABLE,bay,0,top,0,ww,peak,dd,plaster);roof(bay,ww,dd,top,peak,shade);
+      beam(bay,-1.71,top,0,top+peak,-1.47,.17);beam(bay,0,top+peak,1.71,top,-1.47,.17);
+      beam(bay,-1.71,top,1.71,top,-1.47,.17);
+      for(const a of [-1,1]){
+        beam(bay,a*1.65,eaves-1.01,a*1.65,top,-1.47,.19);
+        window(bay,a*.66,top-.73,-1.48,.71,.92,false,1,true);
+        planter(bay,a*.66,top-1.32,-1.69,.79);
+      }
+    }
     // Frame all street-facing gables and wrap the posts / plate onto side wings.
     const f=-d*.5-.067,rim=w*.5-.075;
-    beam(b,-rim,eaves,0,eaves+rise,f);beam(b,0,eaves+rise,rim,eaves,f);
-    beam(b,-rim,eaves,rim,eaves,f,.2);
-    beam(b,0,eaves+.02,0,eaves+rise-.04,f,.17);
-    beam(b,-rim*.66,eaves+rise*.30,rim*.66,eaves+rise*.30,f,.16);
-    if(rise>2.4){
-      beam(b,-rim*.26,eaves,-rim*.49,eaves+rise*.48,f,.105);
-      beam(b,rim*.26,eaves,rim*.49,eaves+rise*.48,f,.105);
+    if(!was){
+      beam(b,-rim,eaves,0,eaves+rise,f);beam(b,0,eaves+rise,rim,eaves,f);
+      beam(b,-rim,eaves,rim,eaves,f,.2);
+      beam(b,0,eaves+.02,0,eaves+rise-.04,f,.17);
+      beam(b,-rim*.66,eaves+rise*.30,rim*.66,eaves+rise*.30,f,.16);
+      if(rise>2.4){
+        beam(b,-rim*.26,eaves,-rim*.49,eaves+rise*.48,f,.105);
+        beam(b,rim*.26,eaves,rim*.49,eaves+rise*.48,f,.105);
+      }
+      if(!sm)window(b,0,eaves+rise*.42,f-.04,.76,.87,false,1,inn);
+    }else{
+      for(let xx=-rim+.32;xx<rim;xx+=.52)box(b,xx,eaves-.105,f,.15,.13,.39,edgeWood);
     }
-    if(!sm)window(b,0,eaves+rise*.42,f-.04,.76,.87,false,1,inn);
     const floor=inn?3.20:eaves>4.7?2.95:2.48;
     for(const z of [f,d*.5+.068]){
       beam(b,-rim,foot,rim,foot,z,.19);beam(b,-rim,eaves,rim,eaves,z,.205);
@@ -161,22 +195,32 @@ export function buildTown({group,start,end,at,random:r}){
     box(b,doorX+.31*doorW,doorH*.49,f-.246,.087,.11,.061,'#a18250');
     box(b,doorX,.08,f-.28,doorW+.40,.18,.73,stone[2]);
     for(const a of [-1,1])window(b,a*w*.305,1.95,f-.064,inn?.98:.76,.98,false,1,inn);
-    if(eaves>4.6)for(const a of [-1,0,1])window(b,a*w*.279,eaves-1.04,f-.064,.83,1.05,false,1,inn);
+    if(eaves>4.6)for(const a of [-1,0,1]){
+      window(b,a*w*.279,eaves-1.04,f-.064,.83,1.05,false,1,inn);
+      if(!was&&a!==0&&r()>.33)plant(a*w*.279,eaves-1.69,f-.31);
+    }
     if(!barn||inn){
-      const x=w*.28,z=d*.23,y=eaves+rise+1.1;
+      const x=w*.28,z=d*.23,y=eaves+rise*(was?.67:1)+(was?.67:1.1);
       box(b,x,(eaves+rise*.47+y)*.5,z,.79,y-(eaves+rise*.47),.76,stone[1]);
       box(b,x,y,z,.99,.16,.99,stone[3]);
       for(let j=0;j<4;j++)box(b,x-.406,y-.18-j*.25,z,.042,.028,.71,stone[3]);
     }
     if(inn||barn){
-      const xp=w*.16,hp=inn?3.45:2.86,wp=w*.49;
+      const xp=inn?w*.095:w*.16,hp=inn?3.45:2.86,wp=inn?w*.73:w*.49;
       box(b,xp,hp,f-.66,wp,.14,1.19,shade,-.19);
       for(const a of [-1,1]){
         const sx=xp+a*(wp*.46);
         box(b,sx,hp*.50,f-1.18,.17,hp+.04,.19,timber);
         box(b,sx,.19,f-1.18,.30,.47,.30,stone[1]);
       }
+      if(barn){
+        // Cooper's service counter and staves; alternate active and closed facades.
+        box(b,xp,1.20,f-.31,wp*.64,.20,.59,edgeWood);
+        barrel(offset(b,xp+wp*.35,0,f-.82),.33,.81);
+        if(w>7.4)barrel(offset(b,xp+wp*.51,0,f-.74),.30,.69);
+      }
       if(inn){
+        barrel(offset(b,w*.36,0,f-1.06),.31,.75);
         box(b,-w*.30,4.00,f-.43,.17,.16,.87,timber);
         box(b,-w*.30,3.63,f-.82,.63,.52,.1,'#8f5d40');
         post(b,-w*.30,3.64,f-.88,.145,.024,.145,'#c6a469',rad);
@@ -185,6 +229,24 @@ export function buildTown({group,start,end,at,random:r}){
     }
   }
 
+  function offset(b,x=0,y=0,z=0){
+    const c=Math.cos(b.yaw),s=Math.sin(b.yaw);
+    return {x:b.x+c*x+s*z,y:b.y+y,z:b.z-s*x+c*z,yaw:b.yaw};
+  }
+  function planter(b,x,y,z,w){
+    box(b,x,y,z,w,.21,.29,'#79583e');
+    for(let i=0;i<6;i++){
+      const xp=x+(i/5-.5)*w*.84;
+      rock(b,xp,y+.11+r()*.08,z,.14,.15+r()*.12,.145,choose(['#526640','#6b7650','#4d623b'],r));
+      if(r()>.39)rock(b,xp,y+.23+r()*.07,z,.064,.06,.065,choose(['#a45640','#af8b48','#c3a46c'],r));
+    }
+  }
+  function barrel(b,radius=.33,h=.79){
+    for(const [y,w,hh] of [[.21,.94,.37],[.49,1,.29],[.79,.93,.35]])
+      post(b,0,y*h,0,radius*w,hh*h,radius*w,'#805839');
+    for(const y of [.20,.69])post(b,0,y*h,0,radius*1.014,.068,radius*1.014,'#47473e');
+    post(b,0,.99*h,0,radius*.86,.044,radius*.86,'#9c754d');
+  }
   function wall(s,lateral,len,h=.83){
     const b=attach(at,s,lateral);
     const slots=Math.ceil(len/.72);
@@ -198,7 +260,25 @@ export function buildTown({group,start,end,at,random:r}){
     const b=attach(at,s,lateral);
     for(let i=0;i<Math.ceil(len/.70);i++){
       const z=(i+.5-Math.ceil(len/.70)*.5)*.70;
-      rock(b,(r()-.5)*.29,.39+r()*.19,z,.61,.53+r()*.18,.62,choose(['#626c45','#626949','#717752','#545c42'],r),r()*.4,r()*4,r()*.17);
+      const color=choose(['#59613e','#65704a','#697342','#515d43'],r);
+      emit(LEAF,b,(r()-.5)*.28,.36+r()*.16,z,.57,.43+r()*.20,.61,color,r()*.4,r()*4,r()*.17);
+      for(let j=0;j<3;j++)emit(LEAF,b,(r()-.5)*.65,.54+r()*.25,z+(r()-.5)*.7,.20+r()*.11,.20+r()*.09,.25,choose(['#687548','#738151','#767d4b'],r));
+    }
+  }
+
+  function orchardTree(s,lateral,height){
+    const b=attach(at,s,lateral),c=height*.57;
+    post(b,0,c*.5,0,.12,c,.109,'#564939',-.02,0,.07);
+    for(let u=0;u<6;u++){
+      const a=u*2.399,rr=(.30+r()*.28)*height*.52,x=Math.cos(a)*rr,z=Math.sin(a)*rr;
+      const y=height*(.50+r()*.28);
+      post(b,x*.37,(y+c*.64)*.5,z*.40,.058,Math.hypot(y-c*.64,x,z),.058,'#5f513d',0,b.yaw*.19,-Math.atan2(x,y-c*.64));
+      for(let i=0;i<5;i++){
+        const dx=(r()-.5)*height*.38,dz=(r()-.5)*height*.33;
+        const up=(i===4?.17:.03+r()*.09)*height;
+        emit(LEAF,b,x+dx,y+up,z+dz,height*(.17+r()*.06),height*(.14+r()*.05),height*(.16+r()*.052),
+          choose(['#536144','#64724e','#768052','#5d6f4b','#6e7549'],r),r(),r()*5,r());
+      }
     }
   }
 
@@ -221,7 +301,11 @@ export function buildTown({group,start,end,at,random:r}){
     // 4.25m even with grade and camber; the rider is about 2.9m high.
     const high=4.69+Math.max(0,yL,yR);
     box(b,0,high,0,8.96,.28,.27,timber);
-    for(const a of [-1,1])box(b,a*3.91,high-.35,0,1.27,.12,.17,edgeWood,0,0,a*.49);
+    box(b,0,high+.15,0,8.65,.075,.33,edgeWood);
+    for(const a of [-1,1]){
+      box(b,a*3.91,high-.35,0,1.27,.14,.22,edgeWood,0,0,a*.49);
+      for(const z of [-.15,.15])post(b,a*3.85,high,z,.073,.044,.073,'#8e7754',rad);
+    }
   }
 
   function well(s,lateral){
@@ -262,21 +346,101 @@ export function buildTown({group,start,end,at,random:r}){
     }
   }
 
+  function belfry(s,lateral){
+    // Roadside way chapel with a weathered stone bell tower. Open bell
+    // apertures and a bronze silhouette read before the viewer reaches town.
+    const b=attach(at,s,lateral,-.18),w=4.28,d=4.22;
+    const belf=6.62,top=9.36;
+    base(b,w+.35,d+.25,1.25,1.32);
+    box(b,0,3.25,0,w,6.71,d,stone[2]);
+    for(const face of [-1,1]){
+      for(let row=0;row<13;row++){
+        for(let j=0;j<5;j++){
+          const x=(j-2)*.824+((row%2&&j>0&&j<4)?.22:0);
+          const y=1.49+row*.395,z=face*(d*.5+.029);
+          box(b,x,y,z,.72+r()*.092,.31+r()*.04,.082,choose(stone,r));
+          if(j===0||j===4)box(b,face*(w*.5+.022),y,(j-2)*.91,.078,.33,1.04,choose(stone,r));
+        }
+      }
+      box(b,0,belf-.13,face*d*.5,w+.22,.24,.25,stone[3]);
+      box(b,face*w*.5,belf-.13,0,.25,.24,d+.20,stone[3]);
+      for(const right of [-1,1]){
+        box(b,right*(w*.5-.32),(belf+top)*.5,face*(d*.5-.31),.64,top-belf,.63,stone[1]);
+        box(b,right*(w*.5-.32),top-.50,face*(d*.5-.31),.85,.2,.86,stone[3]);
+      }
+      box(b,0,top-.34,face*(d*.5-.13),w,.75,.55,stone[1]);
+      box(b,face*(w*.5-.13),top-.34,0,.55,.75,d,stone[1]);
+      box(b,0,belf+.25,face*(d*.5-.12),w,.60,.46,stone[2]);
+      box(b,face*(w*.5-.12),belf+.25,0,.46,.60,d,stone[2]);
+      box(b,0,3.93,face*(d*.5+.045),.38,1.34,.15,stone[3]);
+      box(b,0,3.95,face*(d*.5+.135),.17,1.07,.077,'#33352d');
+      for(const a of [-1,1])box(b,a*1.53,1.60,face*(d*.5+.08),.56,3.18,.27,stone[1]);
+    }
+    box(b,0,8.67,0,3.5,.20,.25,timber);
+    post(b,0,7.64,0,.56,.25,.56,'#94734b');
+    emit(CONE,b,0,7.99,0,.55,.70,.55,'#80633d');
+    post(b,0,7.48,0,.09,.28,.09,'#a48152');
+    box(b,0,top+.045,0,w+.54,.14,d+.56,stone[3]);
+    emit(CONE,b,0,top+1.20,0,2.88,2.57,2.85,'#514c46',0,.39);
+    for(let i=0;i<6;i++){
+      const rad0=2.86-i*.43;
+      emit(CONE,b,0,top+.18+i*.37,0,rad0,.46,rad0,'#554e45',0,.39);
+    }
+    post(b,0,top+2.68,0,.065,.51,.065,'#806346');
+    rock(b,0,top+2.87,0,.20,.20,.20,'#9c8352');
+    // The stone nave is a low, long silhouette alongside the bell tower.
+    const nave=offset(b,-4.65,0,.52);
+    base(nave,5.92,5.46,1.17,.76);
+    box(nave,0,2.05,0,5.92,3.14,5.43,stone[2]);
+    emit(GABLE,nave,0,3.62,0,5.92,2.58,5.43,stone[2]);roof(nave,5.92,5.43,3.62,2.58,'#58544e');
+    for(const a of [-1,1]){
+      box(nave,a*1.47,2.23,-2.73,.68,1.65,.14,stone[3]);
+      box(nave,a*1.47,2.22,-2.82,.40,1.32,.072,'#514d39');
+      box(nave,a*1.47,3.00,-2.81,.30,.23,.089,stone[3],0,0,.78);
+    }
+  }
+
+  function market(s,lateral,turn,cloth){
+    const b=attach(at,s,lateral,Math.sign(lateral)*Math.PI/2+turn),w=3.05,d=1.54;
+    for(const a of [-1,1])for(const z of [-1,1]){
+      const yy=z>0?2.70:2.36;
+      box(b,a*w*.49,yy*.50,z*d*.44,.13,yy,.14,timber);
+      box(b,a*w*.49,.14,z*d*.44,.20,.29,.22,stone[2]);
+    }
+    for(const z of [-1,1])box(b,0,z>0?2.70:2.36,z*d*.49,w+.26,.118,.104,edgeWood);
+    const paint=cloth?'#765045':'#647564',linen='#bdac82',n=9;
+    for(let i=0;i<n;i++){
+      const px=(i+.5-n*.5)*w/n;
+      box(b,px,2.535,0,w/n+.012,.044,d+.38,i%3===0?linen:paint,-.195);
+      box(b,px,2.32,-d*.57,w/n+.01,.23,.05,i%3===0?linen:paint,0,0,(r()-.5)*.035);
+    }
+    box(b,.16,.93,-.28,2.59,.14,.78,'#947452');
+    for(const a of [-1,1])box(b,.16+a*1.06,.46,-.28,.105,.92,.38,edgeWood);
+    for(let m=0;m<3;m++){
+      const tx=(m-1)*.75+.08;
+      box(b,tx,1.04,-.32,.61,.12,.54,'#674f39');
+      for(let k=0;k<8;k++)rock(b,tx+(r()-.5)*.47,1.13+r()*.11,-.32+(r()-.5)*.36,.065,.069,.067,
+        cloth?choose(['#a66a48','#ad854b','#a14f42'],r):choose(['#798457','#91945e','#ac975b'],r));
+    }
+    barrel(offset(b,w*.60,0,.33),.30,.69);
+    for(const [xx,zz] of [[-1.86,.26],[-1.64,.74]])box(b,xx,.225,zz,.53,.45,.51,'#8d6b45');
+  }
+
   // Choreography down a narrow connected street: outer gate and pasture wall,
   // first tight row, pocket market/well with a landmark inn, then crofts.
   // Building frontage intervals intentionally abut but don't overlap.
   const houses=[
-    [31,-7.65,5.5,5.9,4.15,'cottage',.02],
-    [44,7.35,7.1,6.2,4.70,'workshop',-.035],[53,7.62,7.9,6.6,5.36,'home',-.017],
-    [63,8.05,8.8,7.1,5.6,'home',-.029],[73,7.75,8.5,6.8,5.20,'home',.014],
-    [43,-7.82,7.0,6.7,4.92,'home',.022],[52.5,-7.70,8.5,6.8,5.35,'home',.012],
-    [62.6,-8.31,8.2,7.8,5.68,'home',-.025],[72.3,-8.02,8.5,6.8,5.08,'workshop',-.035],
-    [89,8.25,8.2,6.6,5.40,'home',.064],[102,9.88,11.2,8.4,6.53,'inn',.035],
-    [115,8.52,8.2,7.4,5.42,'home',-.009],[125,8.25,8.1,7.2,5.62,'home',-.018],
-    [87,-9.31,8.0,7.3,4.83,'workshop',.04],[99,-15.05,8.3,7.1,4.9,'workshop',.11],
-    [111,-8.47,7.8,6.4,5.52,'home',-.01],[121,-7.91,8.6,6.7,5.28,'home',.037],
+    [34,-13.4,5.5,5.9,4.15,'cottage',.08],
+    [44,7.74,7.6,6.1,4.57,'workshop',-.067],[53,7.88,7.4,6.1,5.36,'home',.024],
+    [64,9.37,10.0,7.5,5.12,'stone',-.025],[75,7.91,7.6,6.0,5.62,'home',.062],
+    [46,-8.30,7.6,7.0,4.92,'stone',.077],[59,-10.04,8.1,6.5,4.50,'cottage',-.039],
+    [71,-8.28,9.6,7.1,5.19,'workshop',-.025],
+    [88,8.73,7.2,6.2,4.71,'cottage',.091],[104,9.89,11.6,8.4,6.36,'inn',.04],
+    [117,8.71,8.2,7.3,5.02,'stone',-.032],[129,9.60,8.1,7.2,5.41,'home',-.011],
+    [86,-11.31,7.3,6.2,4.33,'cottage',.04],[99,-15.05,8.3,7.1,4.63,'workshop',.11],
+    [111,-8.47,7.8,6.4,5.52,'home',-.01],[123,-9.01,8.6,6.7,4.91,'stone',.06],
     [132,-8.81,8.3,7.3,5.39,'home',.012],[145,-9.15,7.1,6.3,4.64,'cottage',-.06],
-    [146,9.00,7.4,6.7,4.51,'cottage',.07],[159,9.61,6.3,5.8,3.97,'cottage',-.05]
+    [148,10.10,7.6,6.3,4.22,'workshop',.11],[164,10.97,6.8,5.8,3.98,'cottage',-.14]
   ];
   for(const h of houses)if(located(h[0]))house(...h);
   for(const [s,x,len,h] of [[8,-4.1,8.5,.72],[17,-4.2,8.2,.74],[14,4.55,12,.76],[31,5.20,9.2,.83],
@@ -285,9 +449,17 @@ export function buildTown({group,start,end,at,random:r}){
     if(located(s))wall(s,x,len,h);
   for(const [s,x,len] of [[11,-5.52,12],[12,5.55,17],[34,6.1,3.1],[137,5.39,6],[171,-5.72,13],[180,6.8,12]])
     if(located(s))hedge(s,x,len);
+  for(const [s,x,h] of [[10,11.8,3.98],[17,21.3,4.85],[20,-15.2,4.71],[37,17.7,3.95],
+    [82,-15.85,4.24],[106,-13.2,3.92],[141,11.45,4.01],[155,-14.0,3.56],[177,-9.85,3.92],[185,12.1,3.47]])
+    if(located(s))orchardTree(s,x,h);
   if(located(24))gateway(24);
-  if(located(97.5))well(97.5,-7.55);
+  if(located(29.7))belfry(29.7,12.25);
+  if(located(97.5))well(97.5,-8.20);
+  if(located(82))market(82,5.29,.28,true);
+  if(located(92.65))market(92.65,-6.88,.1,true);
+  if(located(102.7))market(102.7,-7.02,-.12,false);
   square(97.3,-4.25);
+  square(84.6,4.42);
 
   const stamp=new T.Object3D(),tint=new T.Color();
   for(const [geo,list] of items){

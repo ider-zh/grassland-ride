@@ -89,7 +89,7 @@ function meadowMist(uniforms){
       const range=Math.hypot(atS-s,lateral);
       if(range>=reach||n>=uniforms.banks.value.length)continue;
       const zone=sections[segmentAt(atS)].scenery;
-      const size=2.1+r()*1.75,fade=(1-T.MathUtils.smoothstep(range,92,reach))*(zone===1?.86:.42);
+      const size=2.1+r()*1.75,fade=(1-T.MathUtils.smoothstep(range,92,reach))*(zone===1?.86:zone===4?.21:.38);
       const p=frame.at(atS,lateral);
       uniforms.banks.value[n].set(p.x,p.y+size*.35,p.z);
       uniforms.radius.value[n].set(10+7*r(),size,7+5*r());

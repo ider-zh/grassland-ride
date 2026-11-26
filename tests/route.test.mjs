@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 const url=new URL('../src/world/route.js',import.meta.url);
-const {surfacePoint,geographic,wrap,blendAt,segmentAt,LENGTH,CHUNK,COUNT,RADIUS,relief,trailWidth}=await import('data:text/javascript;base64,'+fs.readFileSync(url).toString('base64'));
+const {surfacePoint,geographic,wrap,blendAt,segmentAt,LENGTH,CHUNK,COUNT,RADIUS,relief,trailWidth,TARN,tarnShape,roadLateral}=await import('data:text/javascript;base64,'+fs.readFileSync(url).toString('base64'));
 const delta=(a,b)=>Math.hypot(a.x-b.x,a.y-b.y,a.z-b.z);
 assert.equal(COUNT,216);
 assert.deepEqual([0,192,2304,2944,3840,4992,6720,6912].map(segmentAt),[0,1,2,3,4,5,6,0]);
@@ -30,6 +30,11 @@ for(const k of [0,192,2304,2944,3840,4992,6720,6912]){
 }
 const farPeak=relief(2730,-178),valley=relief(2510,-7),ridge=relief(3120,127);
 assert(farPeak>150&&ridge>valley+28);
+assert(tarnShape(TARN.s,TARN.l)<.02);
+assert(relief(TARN.s,TARN.l)<TARN.level-2,'lake bowl is below the water surface');
+for(let s=TARN.s-115;s<TARN.s+115;s+=.5){
+  for(const side of [-2.7,0,2.7])assert(tarnShape(s,roadLateral(s)+side)>1.05,'lake cannot enter the riding lane');
+}
 const start=surfacePoint(0),opposite=surfacePoint(LENGTH/2),end=surfacePoint(LENGTH);
 assert(delta(start,opposite)>2*RADIUS&&delta(start,end)<1e-8);
 console.log(JSON.stringify({length:LENGTH,radius:RADIUS,chunkSeams:COUNT,steep,minStep,maxStep,farPeak,valley,ridge}));
