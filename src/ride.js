@@ -1,46 +1,20 @@
 import * as T from 'three';
-import {at,ground,wrap,segmentAt,LENGTH} from './world/route.js';
+import {surfacePoint,wrap,segmentAt,sections,LENGTH,FRAME_SPAN} from './world/route.js';
 import {createChunks} from './world/chunks.js';
+import {createFrame} from './world/frame.js';
 import {createSky} from './environment/sky.js';
 import {createTrailAir,createShutter} from './environment/atmosphere.js';
 import {createRain} from './environment/rain.js';
 import {createMount} from './rider/mount.js';
+import {createSoundscape} from './environment/soundscape.js';
 
 const byId=id=>document.getElementById(id),card=byId('msgCard'),canvas=byId('view');
 const clamp=T.MathUtils.clamp,lerp=T.MathUtils.lerp;
-function soundscape(){
-  let ctx,master,noise,wind,rainGain,on=false;
-  function init(){
-    ctx=new AudioContext();master=ctx.createGain();master.gain.value=0;master.connect(ctx.destination);
-    noise=ctx.createBuffer(1,ctx.sampleRate*3,ctx.sampleRate);const d=noise.getChannelData(0);
-    let brown=0;for(let i=0;i<d.length;i++){brown=.94*brown+.06*(Math.random()*2-1);d[i]=brown*2.6;}
-    const src=ctx.createBufferSource(),filter=ctx.createBiquadFilter();src.buffer=noise;src.loop=true;
-    wind=ctx.createGain();wind.gain.value=.11;filter.type='lowpass';filter.frequency.value=760;
-    src.connect(filter).connect(wind).connect(master);
-    const rainTone=ctx.createBiquadFilter();rainTone.type='highpass';rainTone.frequency.value=1200;
-    rainGain=ctx.createGain();rainGain.gain.value=0;
-    src.connect(rainTone).connect(rainGain).connect(master);src.start();
-  }
-  function gains(paused){if(ctx)master.gain.setTargetAtTime(on&&!paused?.65:0,ctx.currentTime,.06);}
-  return {async toggle(paused){if(!ctx)init();await ctx.resume();on=!on;gains(paused);return on;},gains,
-    tick(impacts,s,t,rain){
-      if(!on||!ctx)return;const now=ctx.currentTime;
-      rainGain.gain.setTargetAtTime(rain*.26,now,.3);
-      wind.gain.setTargetAtTime(.09+s*.006+.035*Math.sin(t*.73),now,.25);
-      if(impacts){
-        const osc=ctx.createOscillator(),g=ctx.createGain();osc.frequency.setValueAtTime(132+Math.random()*36,now);osc.frequency.exponentialRampToValueAtTime(44,now+.10);
-        g.gain.setValueAtTime(.10+.013*s,now);g.gain.exponentialRampToValueAtTime(.0002,now+.13);osc.connect(g).connect(master);osc.start(now);osc.stop(now+.14);
-        const src=ctx.createBufferSource(),ng=ctx.createGain();src.buffer=noise;src.playbackRate.value=2.4;
-        ng.gain.setValueAtTime(.22,now);ng.gain.exponentialRampToValueAtTime(.001,now+.09);
-        src.connect(ng).connect(master);src.start(now,Math.random());src.stop(now+.10);
-      }
-    }};
-}
 function run(){
   const renderer=new T.WebGLRenderer({canvas,antialias:true,powerPreference:'high-performance'});
   renderer.outputColorSpace=T.SRGBColorSpace;renderer.shadowMap.enabled=true;renderer.shadowMap.type=T.PCFSoftShadowMap;
   const scene=new T.Scene(),camera=new T.PerspectiveCamera(48,1,.08,790);
-  const sky=createSky(scene),chunks=createChunks(scene),mount=createMount(false),sound=soundscape();scene.add(mount.root);
+  const sky=createSky(scene),chunks=createChunks(scene),mount=createMount(false),sound=createSoundscape(byId('field-audio'));scene.add(mount.root);
   const air=createTrailAir(scene),rainEffect=createRain(scene),renderRide=createShutter(renderer,scene,camera,mount.root);
   const shadowCanvas=document.createElement('canvas');shadowCanvas.width=shadowCanvas.height=128;
   const ctx=shadowCanvas.getContext('2d'),grad=ctx.createRadialGradient(64,64,4,64,64,63);
@@ -52,9 +26,24 @@ function run(){
   let orbit=-.60,height=.045,zoom=5.30,drag=null,head=0,camReady=false;
   let dayBlend=0,skipHours=0,steerLean=0;
   let rain=0,rainTarget=0;
-  const sections=['驿镇','草原','山脊'],debug=new URLSearchParams(location.search).has('inspect');
+  const debug=new URLSearchParams(location.search).has('inspect');
   const headDelta=(from,to)=>Math.atan2(Math.sin(to-from),Math.cos(to-from));
-  const aim=new T.Vector3(),eye=new T.Vector3(),camLook=new T.Vector3();
+  const aim=new T.Vector3(),eye=new T.Vector3(),camLook=new T.Vector3(),forward=new T.Vector3();
+  const rebase=new T.Matrix4();
+  let frameId=NaN,frame;
+  function frameFor(distance){
+    const id=Math.floor(distance/FRAME_SPAN);
+    if(id===frameId)return;
+    const next=createFrame((id+.5)*FRAME_SPAN);
+    if(frame&&camReady){
+      rebase.multiplyMatrices(next.fromPlanet,frame.toPlanet);
+      camera.position.applyMatrix4(rebase);camLook.applyMatrix4(rebase);
+      forward.set(-Math.sin(head),0,-Math.cos(head)).transformDirection(rebase);
+      head=Math.atan2(-forward.x,-forward.z);
+      mount.rebase(rebase);air.rebase(rebase);
+    }
+    renderRide.resetHistory?.();frameId=id;frame=next;chunks.frame(frame);
+  }
   function setGait(step){gait=clamp(gait+step,0,2);byId('gait').textContent=names[gait];document.querySelectorAll('#marks i').forEach((el,i)=>el.classList.toggle('on',i<=gait));}
   function setPause(value){
     paused=value;held.clear();touch=0;drag=null;sound.gains(paused);
@@ -72,6 +61,11 @@ function run(){
     byId('rainBtn').setAttribute('aria-pressed',String(Boolean(rainTarget)));
   };
   byId('timeBtn').onclick=nextTime;byId('audioBtn').onclick=audio;byId('pauseBtn').onclick=()=>setPause(!paused);
+  byId('routeGuide').querySelectorAll('[data-stop]').forEach(button=>button.onclick=()=>{
+    s=Number(button.dataset.stop);meters=s;camReady=false;frameId=NaN;
+    byId('routeGuide').open=false;
+    world(.016);renderRide(s,t,speed,frame);
+  });
   const keys=['ArrowUp','ArrowDown','ArrowLeft','ArrowRight','KeyW','KeyS','KeyA','KeyD','Space','KeyT','KeyM'];
   addEventListener('keydown',e=>{
     if(!keys.includes(e.code)||e.altKey||e.ctrlKey||e.metaKey)return;
@@ -101,17 +95,22 @@ function run(){
     t+=dt;speed=lerp(speed,speeds[gait],1-Math.exp(-dt*1.7));
     const steer=touch||Number(held.has('KeyD')||held.has('ArrowRight'))-Number(held.has('KeyA')||held.has('ArrowLeft'));
     sideV=lerp(sideV,steer*Math.min(1.5,.52+speed*.14),1-Math.exp(-dt*4));lane=clamp(lane+sideV*dt,-1.40,1.40);
-    s+=speed*dt;meters+=speed*dt;
+    const travel=speed*dt;
+    if(travel){
+      const a=surfacePoint(s,lane),b=surfacePoint(s+1,lane),metresPerArc=Math.hypot(b.x-a.x,b.y-a.y,b.z-a.z);
+      s+=travel/metresPerArc;meters+=travel;
+    }
     if(dayBlend>0){const part=Math.min(dt,dayBlend);hour+=skipHours*part/dayBlend;skipHours*=1-part/dayBlend;dayBlend-=part;}
     hour=(hour+dt/16)%24;
     rain=lerp(rain,rainTarget,1-Math.exp(-dt*1.15));
+    frameFor(s);const {at,ground}=frame;
     const p=at(s,lane),prev=at(s-.45,lane),next=at(s+.45,lane);
     const {x,y,z}=p,pitch=Math.atan2(next.y-prev.y,Math.hypot(next.x-prev.x,next.z-prev.z));
     const actualV=Math.abs(lane)>=1.399&&Math.sign(sideV)===Math.sign(lane)?0:sideV;
     steerLean=camReady?lerp(steerLean,actualV,1-Math.exp(-dt*6.5)):actualV;
     const yaw=p.yaw-Math.atan2(steerLean,speed)*.7;
     mount.root.position.set(x,y,z);mount.root.rotation.set(pitch,yaw,0,'YXZ');
-    const impacts=mount.update(t,dt,speed,steerLean,s,(x,negativeZ)=>ground(x,-negativeZ));
+    const contacts=mount.update(t,dt,speed,steerLean,s,(x,negativeZ)=>ground(x,-negativeZ));
     shadowPivot.position.set(x+.09,y+.047,z+.03);shadowPivot.rotation.copy(mount.root.rotation);
     shadow.material.opacity=.82-.28*rain;
     head=camReady?head+headDelta(head,p.yaw)*(1-Math.exp(-dt*2.8)):p.yaw;
@@ -121,10 +120,10 @@ function run(){
     aim.set(x-.67*Math.sin(head),y+1.72,z-.67*Math.cos(head));
     if(!camReady){camera.position.copy(eye);camLook.copy(aim);camReady=true;}
     camera.position.lerp(eye,1-Math.exp(-dt*8.0));camLook.lerp(aim,1-Math.exp(-dt*8.8));camera.lookAt(camLook);
-    chunks(s,t);sky(hour,t,s,camera,mount.root.position,rain);
-    air(dt,t,s,speed,mount.feet);rainEffect(t,camera.position,rain);
-    sound.tick(impacts,speed,t,rain);
-    const section=sections[segmentAt(s)],lap=Math.floor(s/LENGTH)+1;
+    chunks(s,t);const flock=sky(hour,t,s,camera,mount.root.position,rain);
+    air(dt,t,s,speed,mount.feet,frame);rainEffect(t,camera.position,rain);
+    if(dt>0)sound.tick(contacts,{speed,t,dt,s,hour,rain,camera,flock});
+    const section=sections[segmentAt(s)].label,lap=Math.floor(s/LENGTH)+1;
     if(byId('section').textContent!==section)byId('section').textContent=section;
     if(byId('lap').textContent!==String(lap))byId('lap').textContent=lap;
     byId('clock').textContent=[Math.floor(hour),Math.floor((hour%1)*60)].map(v=>String(v).padStart(2,'0')).join(':');
@@ -138,7 +137,7 @@ function run(){
     if(!paused){
       resize();const dt=Math.min(.15,elapsed),steps=Math.max(1,Math.ceil(dt/.034));
       for(let i=0;i<steps;i++)world(dt/steps);
-      renderRide(s,t,speed);
+      renderRide(s,t,speed,frame);
       if(elapsed<1){frameCost+=elapsed;sampleN++;if(sampleN===45){if(frameCost/sampleN>.038&&scale>.65){scale=Math.max(.65,scale*.82);lastW=0;}frameCost=sampleN=0;}}
     }
     requestAnimationFrame(draw);
@@ -146,12 +145,12 @@ function run(){
   if(debug){
     window.rideInspect={state:()=>({s,route:wrap(s),section:segmentAt(s),lap:Math.floor(s/LENGTH)+1,meters,lane,speed,gait,hour,t,rain,rainTarget,paused,orbit,
         position:mount.root.position.toArray(),mountYaw:mount.root.rotation.y,camera:camera.position.toArray(),
-        snowline:scene.getObjectByName('fixed-snowline').position.toArray(),
+        planet:surfacePoint(s,lane),planetCamera:camera.position.clone().applyMatrix4(frame.toPlanet).toArray(),planetFrame:frameId,length:LENGTH,
         chunks:chunks.inspect(),objects:scene.children.length,geometries:renderer.info.memory.geometries}),
-      motion:mount.inspect,
-      advance(seconds,render=true){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);if(render)renderRide(s,t,speed);},
-      setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;camReady=false;world(0);renderRide(s,t,speed);},
-      jump(k,h){s=k;meters=k;hour=h;camReady=false;world(.016);renderRide(s,t,speed);}};
+      motion:mount.inspect,audio:sound.inspect,
+      advance(seconds,render=true){const steps=Math.max(1,Math.ceil(seconds*30));for(let i=0;i<steps;i++)world(seconds/steps);if(render)renderRide(s,t,speed,frame);},
+      setView(yaw,elevation=height,distance=zoom){orbit=yaw;height=elevation;zoom=distance;camReady=false;world(0);renderRide(s,t,speed,frame);},
+      jump(k,h){s=k;meters=k;hour=h;camReady=false;world(.016);renderRide(s,t,speed,frame);}};
   }
   if(!debug||!new URLSearchParams(location.search).has('manual'))requestAnimationFrame(draw);
 }

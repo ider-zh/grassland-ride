@@ -34,6 +34,11 @@ def build():
     tags = (f"<!-- Three.js\n{license_text}\n-->\n"
             + '<script type="importmap">' + json.dumps({"imports": imports}) + '</script>\n'
             + '<script type="module">import "ride/ride";</script>')
+    audio = ROOT / "assets" / "audio"
+    clips = base64.b64encode((audio / "field-sprite.mp3").read_bytes()).decode("ascii")
+    cues = json.loads((audio / "field-cues.json").read_text(encoding="utf-8"))
+    bank = json.dumps({"cues": cues, "audio": clips}, separators=(",", ":"))
+    tags = '<script type="application/json" id="field-audio">' + bank + '</script>\n' + tags
     page = (SOURCE / "shell.html").read_text(encoding="utf-8")
     if page.count("<!--MODULES-->") != 1:
         raise ValueError("The HTML template needs exactly one module placeholder")

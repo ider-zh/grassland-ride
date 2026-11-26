@@ -91,13 +91,19 @@ export function createStride(root,floating=true){
     const fore=i<2,side=i%2?1:-1;
     return {fore,side,x:side*(fore?.205:.235),z:fore?-.54:.57,
       draw:limb(root,fore,i===2),shoe:makeHoof(root),joints:Array.from({length:5},()=>V()),
-      stance:null,anchor:V(),sole:V(),residual:V()};
+      stance:null,q:0,anchor:V(),sole:V(),residual:V()};
   });
   let phase=0,lastDistance=NaN;
   const walk=[.25,.75,0,.5],trot=[.5,0,0,.5],gallop=[.29,.445,0,.145];
   const inverse=new T.Matrix4(),world=V(),local=V(),predicted=V();
-  const pose={phase:0,run:0,trot:0,bob:0,pitch:0,roll:0,impacts:0};
-  return {feet,pose,update(dt,speed,turn,distance,terrain,body){
+  const pose={phase:0,run:0,trot:0,bob:0,pitch:0,roll:0,impacts:0,touchdowns:[]};
+  return {feet,pose,rebase(matrix){
+    for(const f of feet){
+      const base=V();
+      f.anchor.applyMatrix4(matrix);f.sole.applyMatrix4(matrix);
+      f.residual.applyMatrix4(matrix).sub(base.applyMatrix4(matrix));
+    }
+  },update(dt,speed,turn,distance,terrain,body){
     const fast=smooth((speed-3.75)/3.65),up=smooth((speed-1.85)/1.7);
     const hz=mix(mix(.96,1.40,up),1.67,fast),stride=speed/hz;
     phase=frac(phase+dt*hz);const rad=tau*phase;
@@ -110,6 +116,7 @@ export function createStride(root,floating=true){
     const pitch=mix(.021*sine(2*rad+.4),.100*sine(rad+.54)+.075*gather-.050*drive,fast);
     const roll=(1-up)*.027*sine(rad)+fast*.021*sine(rad-.6)+.051*(left-right)-turn*.025;
     Object.assign(pose,{phase,run:fast,trot:up,bob,pitch,roll,gather,drive,left,right,impacts:0});
+    pose.touchdowns.length=0;
     // Rotate about the middle of the barrel rather than the ground below the horse.
     body.rotation.set(pitch,0,roll);body.position.set(.025*(left-right),1.45+bob,.040*gather-.065*drive).sub(local.set(0,1.45,0).applyEuler(body.rotation));
     root.updateMatrixWorld(true);inverse.copy(root.matrixWorld).invert();
@@ -128,7 +135,17 @@ export function createStride(root,floating=true){
       world.copy(predicted).applyMatrix4(root.matrixWorld);world.z-=floating?distance:0;
       world.y=terrain(world.x,-world.z);
       if(stance){
-        if(reset||!f.stance){f.anchor.copy(world);if(!reset)pose.impacts++;}
+        if(reset||!f.stance){
+          f.anchor.copy(world);
+          if(!reset&&dt>0){
+            pose.impacts++;
+            const before=1-f.q;
+            const within=before+q>1e-7?before/(before+q):1;
+            const drop=Math.max(0,f.sole.y-terrain(f.sole.x,-f.sole.z));
+            pose.touchdowns.push({hoof:i,side:f.side,x:world.x,y:world.y,z:world.z+(floating?distance:0),
+              offset:dt*within,force:unit(.27+.32*(speed/7.4)+.22*fast+.11*drop/dt+(f.fore?.04:.0))});
+          }
+        }
         world.copy(f.anchor);
       }else{
         if(!reset&&f.stance){
@@ -138,7 +155,7 @@ export function createStride(root,floating=true){
         world.addScaledVector(f.residual,1-smooth(u/.44));
         world.y=terrain(world.x,-world.z)+lift*arc;
       }
-      f.stance=stance;f.sole.copy(world);world.z+=floating?distance:0;
+      f.stance=stance;f.q=q;f.sole.copy(world);world.z+=floating?distance:0;
       const sole=local.copy(world).applyMatrix4(inverse);
       // Toe-off rotates the heel forward about the toe. The heel clears the ground before lift.
       const breakover=.38+(f.fore?0:.23*fast);

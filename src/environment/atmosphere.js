@@ -1,5 +1,5 @@
 import * as T from 'three';
-import {at,ground,random,windTravel} from '../world/route.js';
+import {random,windTravel,LENGTH,segmentAt,sections} from '../world/route.js';
 
 export function createTrailAir(scene){
   const roll=random(27641),capacity=180,particles=Array.from({length:capacity},()=>({life:0}));let next=0,verge=0,last=NaN;
@@ -15,8 +15,8 @@ export function createTrailAir(scene){
     b.length=(fromHoof?.051:.075)+roll()*.088;b.width=.008+roll()*.014;b.col=greens[Math.floor(roll()*greens.length)];b.hoof=fromHoof;
   }
 
-  const down=[false,false];
-  return (dt,t,s,speed,feet)=>{
+  const down=[false,false],point=new T.Vector3(),dir=new T.Vector3(),zero=new T.Vector3();
+  const update=(dt,t,s,speed,feet,frame)=>{
     const reset=!Number.isFinite(last)||Math.abs(s-last)>3;last=s;
     if(reset){for(const b of particles)b.life=0;verge=0;}
     for(let i=0;i<2;i++){
@@ -27,7 +27,7 @@ export function createTrailAir(scene){
     }
     verge+=dt*(1.8+speed*.45);
     while(verge>=1){
-      verge--;const spot=at(s+(roll()-.31)*12,(roll()<.65?-1:1)*(2.12+roll()*1.85));
+      verge--;const spot=frame.at(s+(roll()-.31)*12,(roll()<.65?-1:1)*(2.12+roll()*1.85));
       const h=spot.y+.23+roll()*.62,n=2+Math.floor(roll()*3);
       for(let i=0;i<n;i++)emit(spot.x+(roll()-.5)*.48,h+roll()*.29,spot.z+(roll()-.5)*.62,false);
     }
@@ -35,7 +35,7 @@ export function createTrailAir(scene){
     for(const b of particles){
       b.life-=dt;if(b.life<=0)continue;
       b.vy-=dt*(b.hoof?7.5:.43);b.x+=(b.vx+.22*Math.sin(3*t+b.a))*dt;b.y+=b.vy*dt;b.z+=b.vz*dt;b.a+=b.spin*dt;
-      if(b.y<ground(b.x,b.z)+.014){b.life=0;continue;}
+      if(b.y<frame.ground(b.x,b.z)+.014){b.life=0;continue;}
       const fade=Math.min(1,b.life*7),len=b.length*fade,w=b.width*fade,ax=Math.cos(b.a)*len,ay=Math.sin(b.a)*len*.77,az=len*.38;
       const write=(l,k,shade)=>{p.setXYZ(v,b.x+ax*l-w*k*Math.sin(b.a),b.y+ay*l+w*k*Math.cos(b.a),b.z+az*l+.008*k);c.setXYZ(v++,b.col.r*shade,b.col.g*shade,b.col.b*shade);};
       write(-.5,0,.75);write(.08,1,1.15);write(.65,0,1);write(-.5,0,.75);write(.65,0,1);write(.08,-.6,.86);
@@ -43,6 +43,15 @@ export function createTrailAir(scene){
     g.setDrawRange(0,v);p.needsUpdate=c.needsUpdate=true;
 
   };
+  update.rebase=matrix=>{
+    zero.set(0,0,0).applyMatrix4(matrix);
+    for(const b of particles)if(b.life>0){
+      point.set(b.x,b.y,b.z).applyMatrix4(matrix);
+      dir.set(b.vx,b.vy,b.vz).applyMatrix4(matrix).sub(zero);
+      b.x=point.x;b.y=point.y;b.z=point.z;b.vx=dir.x;b.vy=dir.y;b.vz=dir.z;
+    }
+  };
+  return update;
 }
 
 // A tileable density map gives each passing bank pockets of clear air. Sample
@@ -65,32 +74,26 @@ function cloudNoise(){
 // Scatter in a two-dimensional meadow coordinate system that moves with the
 // wind. Empty cells stay empty and the trail is never consulted for placement.
 function meadowMist(uniforms){
-  const cellSize=92,reach=108,windAlong=.20;
-  let oldX=NaN,oldS=NaN;
-  const nearby=[];
-  return (x,s,t)=>{
-    const travel=windTravel(t);
-    const ix=Math.floor((x-travel)/cellSize),iz=Math.floor((s-travel*windAlong)/cellSize);
-    if(ix!==oldX||iz!==oldS){
-      nearby.length=0;oldX=ix;oldS=iz;
-      for(let z=iz-2;z<=iz+2;z++)for(let a=ix-2;a<=ix+2;a++){
-        const seed=Math.imul(a,73856093)^Math.imul(z,19349663)^0x615cce;
-        const roll=random(seed);roll();roll();
-        if(roll()>.38)continue;
-        nearby.push({x:(a+.15+.70*roll())*cellSize,s:(z+.15+.70*roll())*cellSize,
-          width:9+7*roll(),height:2.1+1.7*roll(),depth:6+6*roll(),strength:.68+.32*roll()});
-      }
-    }
+  const cells=72,cellSize=LENGTH/cells,reach=142;
+  const mod=i=>(i%cells+cells)%cells;
+  return (s,t,frame)=>{
+    const shift=windTravel(t),alongShift=shift*.2;
+    const index=Math.floor((s-alongShift)/cellSize);
     let n=0;
-    for(const wisp of nearby){
-      const wx=wisp.x+travel,ws=wisp.s+travel*windAlong;
-      const range=Math.hypot(wx-x,ws-s);
-      if(range>=reach)continue;
-      if(n>=uniforms.banks.value.length)break;
-      uniforms.banks.value[n].set(wx,ground(wx,-ws)+wisp.height*.35,-ws);
-      uniforms.radius.value[n].set(wisp.width,wisp.height,wisp.depth);
-      uniforms.bankFade.value[n]=wisp.strength*(1-T.MathUtils.smoothstep(range,75,reach));
-      n++;
+    for(let j=index-2;j<=index+2;j++)for(let a=-2;a<=2;a++){
+      const r=random(Math.imul(a,73856093)^Math.imul(mod(j),19349663)^0x615cce);
+      r();r();
+      if(r()>.56)continue;
+      const atS=(j+.16+.65*r())*cellSize+alongShift;
+      const lateral=a*58+(r()-.5)*39+((shift%130+130)%130)-65;
+      const range=Math.hypot(atS-s,lateral);
+      if(range>=reach||n>=uniforms.banks.value.length)continue;
+      const zone=sections[segmentAt(atS)].scenery;
+      const size=2.1+r()*1.75,fade=(1-T.MathUtils.smoothstep(range,92,reach))*(zone===1?.86:.42);
+      const p=frame.at(atS,lateral);
+      uniforms.banks.value[n].set(p.x,p.y+size*.35,p.z);
+      uniforms.radius.value[n].set(10+7*r(),size,7+5*r());
+      uniforms.bankFade.value[n++]=fade;
     }
     uniforms.bankCount.value=n;
   };
@@ -154,8 +157,8 @@ gl_FragColor=vec4(base,1.);
 }`});
   const pass=new T.Scene(),flat=new T.OrthographicCamera(-1,1,1,-1,0,1);pass.add(new T.Mesh(new T.PlaneGeometry(2,2),mat));
   let lastS=NaN,lastT=NaN;
-  return (s,t,speed)=>{
-    updateMist(horse.position.x,-horse.position.z,t);
+  const render=(s,t,speed,frame)=>{
+    updateMist(s,t,frame);
     u.weatherTime.value=t;u.eye.value.copy(camera.position);u.mistColor.value.copy(scene.fog.color).multiplyScalar(1.07);
     renderer.getDrawingBufferSize(size);const resized=size.x!==target.width||size.y!==target.height;
     if(resized)target.setSize(size.x,size.y);
@@ -167,4 +170,6 @@ gl_FragColor=vec4(base,1.);
     u.horseSpace.value.copy(horse.matrixWorld).invert();u.pixel.value.set(1/size.x,1/size.y);
     renderer.render(pass,flat);previous.copy(current);lastS=s;lastT=t;
   };
+  render.resetHistory=()=>{lastT=NaN;};
+  return render;
 }

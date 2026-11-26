@@ -1,51 +1,95 @@
-// The only coordinate and seam contract used by terrain, scenery, rider and QA.
-export const CHUNK=32, LENGTH=576, SEGMENT=LENGTH/3, COUNT=LENGTH/CHUNK, ROAD_HALF=2.4;
-export const TAU=Math.PI*2;
+// Longitude is measured in metres of equator arc. The path follows one full
+// revolution of a 3D sphere with occasional smooth lateral bends, not a flat oval.
+export const CHUNK=32, LENGTH=6912, COUNT=LENGTH/CHUNK, ROAD_HALF=2.4, TAU=2*Math.PI;
+export const RADIUS=LENGTH/TAU, FRAME_SPAN=128;
+export const sections=[
+ {start:0,label:'驿镇',scenery:0,sound:0},
+ {start:192,label:'长风草原',scenery:1,sound:1},
+ {start:2304,label:'雪山峡谷',scenery:3,sound:2},
+ {start:2944,label:'雪岭山脊',scenery:2,sound:2},
+ {start:3840,label:'山后高原',scenery:4,sound:2},
+ {start:4992,label:'回程草甸',scenery:1,sound:1},
+ {start:6720,label:'归途',scenery:1,sound:1}
+];
 export const wrap=s=>((s%LENGTH)+LENGTH)%LENGTH;
 export const smooth=(a,b,n)=>{const t=Math.max(0,Math.min(1,(n-a)/(b-a)));return t*t*(3-2*t);};
-export const segmentAt=s=>Math.min(2,Math.floor(wrap(s)/SEGMENT));
 export function random(seed){return ()=>{seed=(Math.imul(1664525,seed)+1013904223)>>>0;return seed/4294967296;};}
-const radial=a=>1+.105*Math.cos(2*a+.3)+.065*Math.sin(3*a-.6)+.027*Math.sin(5*a+.8);
-const edge=a=>[radial(a)*Math.sin(a),radial(a)*Math.cos(a)];
-const resolution=2048,cum=new Float64Array(resolution+1);
-let previous=edge(0);
-for(let i=1;i<=resolution;i++){const p=edge(i/resolution*TAU);cum[i]=cum[i-1]+Math.hypot(p[0]-previous[0],p[1]-previous[1]);previous=p;}
-const radius=LENGTH/cum[resolution];
-
-function angleAt(s){
-  const d=wrap(s)/radius;
-  let lo=0,hi=resolution;
-  while(lo+1<hi){const m=(lo+hi)>>1;if(cum[m]<=d)lo=m;else hi=m;}
-  return (lo+(d-cum[lo])/(cum[hi]-cum[lo]))/resolution*TAU;
+export function segmentAt(s){
+  const w=wrap(s);let i=sections.length-1;
+  while(i>0&&w<sections[i].start)i--;
+  return i;
 }
-function roadFrame(s){
-  const a=angleAt(s),p=edge(a);
-  const left=edge(a-.0003),right=edge(a+.0003);
-  const dx=right[0]-left[0],dz=right[1]-left[1],len=Math.hypot(dx,dz);
-  const fx=dx/len,fz=dz/len;
-  return {x:p[0]*radius,z:p[1]*radius,fx,fz,rx:-fz,rz:fx,yaw:Math.atan2(-fx,-fz)};
+function zoneBlend(s,key){
+  const w=wrap(s),i=segmentAt(w),a=sections[i],j=(i+1)%sections.length;
+  const end=j?sections[j].start:LENGTH,from=w-a.start,to=end-w,range=22;
+  if(from<range)return [sections[(i+sections.length-1)%sections.length][key],a[key],smooth(-range,range,from)];
+  if(to<range)return [a[key],sections[j][key],smooth(-range,range,-to)];
+  return [a[key],a[key],0];
 }
-export function ground(x,z){
-  const a=Math.atan2(x,z),r=Math.hypot(x,z),d=r-radial(a)*radius;
-  // Smooth analytic world surface: no per-tile height recipes or scene-dependent edges.
-  const ridge=Math.exp(-Math.pow((Math.cos(a+.82)-1)/.47,2));
-  const town=Math.exp(-Math.pow((Math.cos(a-.94)-1)/.33,2));
-  const local=.56*Math.sin(x*.085+z*.065)+.43*Math.sin(x*.11-z*.08)+.24*Math.cos(z*.18);
-  const hill=13.8*ridge* Math.exp(-Math.pow((d+8)/38,2));
-  const apron=2.1*Math.sin(x*.027-z*.013)+1.1*Math.cos(z*.041+x*.02);
-  return .88+apron*(1-.67*town)+hill+local*(1-.79*town);
+export const blendAt=s=>zoneBlend(s,'sound');
+export const terrainBlend=s=>zoneBlend(s,'scenery');
+const signed=(s,m)=>wrap(s-m+LENGTH/2)-LENGTH/2;
+const bell=(x,span)=>Math.exp(-Math.pow(x/span,2));
+function bend(s){
+  // Flat stretches between these isolated, C1-smooth turns. No global sine
+  // steering or large continuous heading changes.
+  let x=0;
+  for(const [start,hold,end,d] of [[440,625,865,38],[1350,1520,1700,-34],
+      [2120,2350,2640,-26],[2670,3060,3640,130],[3810,4000,4360,55],
+      [5120,5330,5650,-58],[5860,6090,6380,31]]){
+    const w=wrap(s);
+    if(w>start&&w<end)x+=d*(w<hold?smooth(start,hold,w):1-smooth(hold,end,w));
+  }
+  return x;
 }
-export function at(s,lateral=0){
-  const f=roadFrame(s),x=f.x+f.rx*lateral,z=f.z+f.rz*lateral;
-  return {x,z,y:ground(x,z),yaw:f.yaw,fx:f.fx,fz:f.fz,rx:f.rx,rz:f.rz};
+export function relief(s,l){
+  s=wrap(s);
+  const a=s/RADIUS;
+  const townFade=.19+.81*smooth(70,250,Math.abs(signed(s,70)));
+  const blanket=(2.8*Math.sin(a*13+.2)+1.9*Math.cos(a*29+l*.019)+1.35*Math.sin(a*61-l*.045))*townFade;
+  const texture=(.42*Math.sin(Math.sin(a)*152+l*.095)+.32*Math.sin(Math.cos(a)*130-l*.104))*townFade;
+  const foot=8*bell(signed(s,2960),650)*bell(l-10,300);
+  // Fixed mountain massif. The valley lies between the two actual summits;
+  // the later route climbs its eastern shoulder as the road bends right.
+  const massif=
+    157*bell(signed(s,2400),183)*bell(l+114,83)+
+    118*bell(signed(s,2510),158)*bell(l-121,92)+
+    173*bell(signed(s,2730),252)*bell(l+178,81)+
+    137*bell(signed(s,2900),265)*bell(l-191,104)+
+    95*bell(signed(s,3300),244)*bell(l-180,140)+
+    127*bell(signed(s,3110),319)*bell(l+221,104);
+  const spurs=(12+8*Math.sin(l*.069+a*96)+4.5*Math.sin(l*.11-a*116))*
+    bell(signed(s,2880),630)*smooth(39,129,Math.abs(l));
+  // Behind the pass an open elevated basin with low tablelands, not a second fake snowy skybox.
+  const table=20*bell(signed(s,4390),560)*(1-.72*bell(l,91))+
+    37*bell(signed(s,4660),190)*bell(l+167,130)+
+    34*bell(signed(s,4160),215)*bell(l-172,138);
+  const spill=(15+9*bell(l-20,100))*smooth(2950,3120,s)*(1-smooth(3450,3670,s))*
+    smooth(15,82,bend(s)-l)*bell(l-40,225);
+  const natural=2+blanket+texture+foot+massif+spurs+table-spill;
+  const mountainRoad=smooth(2230,2620,s)*13
+    +smooth(2740,3195,s)*63
+    -smooth(3350,4015,s)*64
+    -smooth(4410,5050,s)*12;
+  const mainRoad=2+blanket*.48+mountainRoad;
+  // A graded shelf follows the trail in the mountain, then blends back into
+  // the real slopes. This keeps sharp rock details from becoming road ramps.
+  const gradeWeight=(1-smooth(6,38,Math.abs(l-bend(s))))*
+    smooth(2020,2300,s)*(1-smooth(4750,5070,s));
+  return natural+(mainRoad-natural)*gradeWeight;
 }
-export function trailWidth(s){return ROAD_HALF+.21*Math.sin(wrap(s)*TAU/32)+.10*Math.cos(wrap(s)*TAU/18);}
-export function blendAt(s){
-  const base=segmentAt(s),pos=wrap(s)%SEGMENT,range=15;
-  if(pos<range)return [(base+2)%3,base,smooth(-range,range,pos)];
-  if(pos>SEGMENT-range)return [base,(base+1)%3,smooth(-range,range,pos-SEGMENT)];
-  return [base,base,0];
+export function globePoint(s,l,down=0){
+  const a=wrap(s)/RADIUS,lat=l/RADIUS,cos=Math.cos(lat);
+  const radius=RADIUS+relief(s,l)-down;
+  return {x:radius*Math.sin(a)*cos,y:-radius*Math.sin(lat),z:radius*Math.cos(a)*cos};
 }
+export const surfacePoint=(s,lateral=0,down=0)=>globePoint(s,bend(s)+lateral,down);
+export const roadLateral=(s)=>bend(s);
+export function geographic(x,y,z){
+  const r=Math.hypot(x,y,z);
+  return {s:wrap(Math.atan2(x,z)*RADIUS),l:-Math.asin(Math.max(-1,Math.min(1,y/r)))*RADIUS,r};
+}
+export function trailWidth(s){return ROAD_HALF+.21*Math.sin(wrap(s)*TAU/32)+.10*Math.cos(wrap(s)*TAU/(LENGTH/384));}
 export function windTravel(t){return 2.05*t+1.75*Math.sin(t*.50)+.58*Math.sin(t*1.12);}
 export function meadowWind(x,s,t){
   const phase=x*.17+s*.092-windTravel(t)*.67+.82*Math.sin(s*.081+t*.25);

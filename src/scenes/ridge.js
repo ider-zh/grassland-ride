@@ -93,7 +93,7 @@ export function buildRidge({group,start,end,index,at,random:r,windTime,own}){
   const rocks=[], scrub=[], rails=[];
   const stamp=new T.Object3D();
   const fade=s=>{
-    const f=T.MathUtils.smoothstep(s,384,405)*(1-T.MathUtils.smoothstep(s,554,576));
+    const f=T.MathUtils.smoothstep(s,2944,2976)*(1-T.MathUtils.smoothstep(s,3808,3840));
     return f;
   };
   function mine(s,lateral,w,h,d,rotation,tint,raise=h*.29){

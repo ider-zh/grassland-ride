@@ -368,7 +368,7 @@ diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.115,.057,.038),br);diffuseColor.rgb=
   const shoulder=V(),bit=V(),hip=V(),knee=V(),ankle=V();
   let seatHeight=1.91,seatRate=0,lean=0,leanRate=0;
   const riderMatrix=new T.Matrix4();
-  return {root,feet:gait.feet,inspect:()=>({pose:{...gait.pose},seatHeight,lean,tailTip:tail.points.at(-1).toArray(),tailDock:tail.points[1].toArray(),
+  return {root,feet:gait.feet,rebase:gait.rebase,inspect:()=>({pose:{...gait.pose},seatHeight,lean,tailTip:tail.points.at(-1).toArray(),tailDock:tail.points[1].toArray(),
     arms:limbs.map(f=>f.arm.inspect()),tailLocks:tail.guides.map(g=>g.nodes.at(-1).toArray()),
     feet:gait.feet.map(f=>({down:f.stance,sole:f.sole.toArray(),joints:f.joints.map(v=>v.toArray())}))}),
     update(t,dt,speed,turn,distance,terrain){
@@ -417,6 +417,6 @@ diffuseColor.rgb=mix(diffuseColor.rgb,vec3(.115,.057,.038),br);diffuseColor.rgb=
       for(const panel of coat)panel(t,dt,air,gust,seatRate,p.roll);
       for(const update of cloth)update(t,dt,speed,turn,impact);
       for(const update of flow)update(t,dt,speed,turn,impact);
-      return p.impacts;
+      return p.touchdowns;
     }};
 }
